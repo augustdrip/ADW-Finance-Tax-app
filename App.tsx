@@ -168,6 +168,8 @@ const App: React.FC = () => {
     return transactions;
   }, [transactions, currentMonth, activeTab]);
 
+  const [bankBalance, setBankBalance] = useState<number>(parseFloat(localStorage.getItem('mercury_balance') || '0'));
+
   const stats: DashboardStats = useMemo(() => {
     const totalSpent = transactions.reduce((sum, t) => sum + t.amount, 0);
     const totalPotential_deductions = transactions.reduce((sum, t) => sum + (t.analysis?.deductibleAmount || 0), 0);
@@ -176,10 +178,10 @@ const App: React.FC = () => {
       totalPotentialDeductions: totalPotential_deductions,
       projectedTaxSavings: totalPotential_deductions * 0.25,
       optimizationScore: transactions.length > 0 ? Math.round((transactions.filter(t => t.analysis).length / transactions.length) * 100) : 0,
-      bankBalance: 245600.50, // Mock Balance pulled from Mercury
+      bankBalance: bankBalance,
       lastSync: lastSyncTime
     };
-  }, [transactions, lastSyncTime]);
+  }, [transactions, lastSyncTime, bankBalance]);
 
   const chartData = useMemo(() => {
     const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'];
@@ -221,28 +223,45 @@ const App: React.FC = () => {
     setNotification({ message: "Connecting to Mercury Protocol...", type: 'success' });
 
     try {
-      // Simulate API call to Mercury
-      // In a real app, this would be: const newT = await mercuryService.fetchTransactions(mercuryApiKey);
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      // Call real Mercury API
+      const mercuryTransactions = await mercuryService.fetchTransactions(mercuryApiKey);
       
-      const mockMercuryImport = [
-        { id: `merc_${Date.now()}`, date: new Date().toISOString().split('T')[0], vendor: 'OpenAI', amount: 450.00, category: 'Software/SaaS', context: 'API Usage: GPT-4o processing', bankVerified: true, attachments: [] },
-        { id: `merc_${Date.now() + 1}`, date: new Date().toISOString().split('T')[0], vendor: 'Amazon Web Services', amount: 1240.22, category: 'Software/SaaS', context: 'EC2 GPU instances for R&D training', bankVerified: true, attachments: [] }
-      ];
-
-      // Add only unique transactions (simple mock check)
+      // Add only unique transactions (check by bankId to avoid duplicates)
       setTransactions(prev => {
+        const existingBankIds = new Set(prev.filter(p => p.bankId).map(p => p.bankId));
         const existingIds = new Set(prev.map(p => p.id));
-        const filtered = mockMercuryImport.filter(m => !existingIds.has(m.id));
-        return [...filtered, ...prev];
+        
+        const newTransactions = mercuryTransactions
+          .filter(m => !existingBankIds.has(m.id) && !existingIds.has(m.id))
+          .map(t => ({
+            ...t,
+            bankId: t.id, // Store original Mercury ID
+            id: `merc_${t.id}`, // Create unique app ID
+            bankVerified: true
+          }));
+        
+        // Save new transactions to Supabase
+        newTransactions.forEach(t => db.transactions.upsert(t));
+        
+        return [...newTransactions, ...prev];
       });
+
+      // Also fetch the real bank balance
+      try {
+        const balance = await mercuryService.fetchTotalBalance(mercuryApiKey);
+        setBankBalance(balance / 100); // Convert from cents to dollars
+        localStorage.setItem('mercury_balance', String(balance / 100));
+      } catch (balanceError) {
+        console.warn("Could not fetch balance:", balanceError);
+      }
 
       const now = new Date().toLocaleString();
       setLastSyncTime(now);
       localStorage.setItem('mercury_sync', now);
-      setNotification({ message: "Sync Complete. 2 records unsubscribed from bank ledger.", type: 'success' });
-    } catch (error) {
-      setNotification({ message: "Mercury Connection Failed. Verify API Credentials.", type: 'alert' });
+      setNotification({ message: `Sync Complete. ${mercuryTransactions.length} records retrieved from Mercury.`, type: 'success' });
+    } catch (error: any) {
+      console.error("Mercury Sync Error:", error);
+      setNotification({ message: error.message || "Mercury Connection Failed. Verify API Credentials.", type: 'alert' });
     } finally {
       setIsMercurySyncing(false);
     }
@@ -748,7 +767,226 @@ const App: React.FC = () => {
             </div>
           )}
 
-          {/* ... Other tabs follow previous patterns ... */}
+          {activeTab === 'agreements' && (
+            <div className="space-y-6 animate-in fade-in duration-500">
+              <div className="flex justify-between items-center">
+                <div>
+                  <h2 className="text-2xl font-black text-white">Service Agreements</h2>
+                  <p className="text-xs text-slate-500">Active client contracts and retainers.</p>
+                </div>
+                <button onClick={() => { setEditingAgreement(null); setShowModal('agreement'); }} className="bg-indigo-600 hover:bg-indigo-500 text-white px-5 py-2.5 rounded-xl text-xs font-black uppercase flex items-center gap-2 transition-all shadow-lg active:scale-95">
+                  <Plus size={18} /> New Agreement
+                </button>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {agreements.map(a => (
+                  <div key={a.id} className="bg-[#121216] border border-white/5 rounded-3xl p-6 hover:border-indigo-500/30 transition-all group">
+                    <div className="flex justify-between items-start mb-4">
+                      <div className="p-3 bg-indigo-500/10 rounded-2xl">
+                        <FileSignature size={20} className="text-indigo-400" />
+                      </div>
+                      <span className={`text-[9px] font-black px-2 py-1 rounded-lg uppercase tracking-widest ${
+                        a.status === 'Active' ? 'bg-emerald-500/10 text-emerald-500' : 
+                        a.status === 'Pending' ? 'bg-amber-500/10 text-amber-500' : 
+                        'bg-slate-500/10 text-slate-500'
+                      }`}>{a.status}</span>
+                    </div>
+                    <h3 className="text-lg font-bold text-white mb-1 group-hover:text-indigo-400 transition-colors">{a.clientName}</h3>
+                    <p className="text-xs text-slate-500 mb-4 line-clamp-2">{a.scopeOfWork}</p>
+                    <div className="flex justify-between items-center pt-4 border-t border-white/5">
+                      <div>
+                        <div className="text-lg font-black text-emerald-400">${a.value.toLocaleString()}</div>
+                        <div className="text-[9px] text-slate-500 uppercase">Contract Value</div>
+                      </div>
+                      <div className="flex gap-2">
+                        <button onClick={() => { setEditingAgreement(a); setShowModal('agreement'); }} className="p-2 hover:text-indigo-400 transition-colors"><Edit3 size={16}/></button>
+                        <button onClick={async () => { if(confirm('Delete this agreement?')) { await db.agreements.delete(a.id); setAgreements(prev => prev.filter(x => x.id !== a.id)); }}} className="p-2 hover:text-rose-500 transition-colors"><Trash2 size={16}/></button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {agreements.length === 0 && (
+                <div className="text-center py-20 text-slate-500">
+                  <FileSignature size={48} className="mx-auto mb-4 opacity-30" />
+                  <p className="text-sm">No agreements yet. Add your first client contract.</p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {activeTab === 'invoices' && (
+            <div className="space-y-6 animate-in fade-in duration-500">
+              <div className="flex justify-between items-center">
+                <div>
+                  <h2 className="text-2xl font-black text-white">Revenue Log</h2>
+                  <p className="text-xs text-slate-500">Track invoices and incoming payments.</p>
+                </div>
+                <button onClick={() => { setEditingInvoice(null); setShowModal('invoice'); }} className="bg-indigo-600 hover:bg-indigo-500 text-white px-5 py-2.5 rounded-xl text-xs font-black uppercase flex items-center gap-2 transition-all shadow-lg active:scale-95">
+                  <Plus size={18} /> New Invoice
+                </button>
+              </div>
+              <div className="bg-[#121216] border border-white/5 rounded-2xl overflow-hidden shadow-2xl">
+                <table className="w-full text-left">
+                  <thead>
+                    <tr className="text-slate-500 text-[9px] uppercase tracking-[0.2em] border-b border-white/5 bg-white/2">
+                      <th className="px-6 py-4">Invoice #</th>
+                      <th className="px-6 py-4">Client</th>
+                      <th className="px-6 py-4">Amount</th>
+                      <th className="px-6 py-4">Due Date</th>
+                      <th className="px-6 py-4 text-center">Status</th>
+                      <th className="px-6 py-4 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                    {invoices.map(inv => (
+                      <tr key={inv.id} className="hover:bg-white/[0.02] transition-colors">
+                        <td className="px-6 py-5 font-mono text-sm text-indigo-400">{inv.invoiceNumber}</td>
+                        <td className="px-6 py-5 font-bold text-white">{inv.clientName}</td>
+                        <td className="px-6 py-5 font-mono text-emerald-400">${inv.amount.toLocaleString()}</td>
+                        <td className="px-6 py-5 text-[11px] font-mono">{inv.dueDate}</td>
+                        <td className="px-6 py-5 text-center">
+                          <span className={`text-[10px] font-bold px-3 py-1 rounded-lg ${
+                            inv.status === 'Paid' ? 'bg-emerald-500/10 text-emerald-500' :
+                            inv.status === 'Sent' ? 'bg-indigo-500/10 text-indigo-400' :
+                            inv.status === 'Overdue' ? 'bg-rose-500/10 text-rose-500' :
+                            'bg-slate-500/10 text-slate-500'
+                          }`}>{inv.status}</span>
+                        </td>
+                        <td className="px-6 py-5 text-right flex justify-end gap-2">
+                          <button onClick={() => { setEditingInvoice(inv); setShowModal('invoice'); }} className="p-2 hover:text-indigo-400 transition-colors"><Edit3 size={16}/></button>
+                          <button onClick={async () => { if(confirm('Delete this invoice?')) { await db.invoices.delete(inv.id); setInvoices(prev => prev.filter(x => x.id !== inv.id)); }}} className="p-2 hover:text-rose-500 transition-colors"><Trash2 size={16}/></button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {invoices.length === 0 && (
+                <div className="text-center py-20 text-slate-500">
+                  <CreditCard size={48} className="mx-auto mb-4 opacity-30" />
+                  <p className="text-sm">No invoices yet. Create your first invoice.</p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {activeTab === 'tax' && (
+            <div className="space-y-6 animate-in fade-in duration-500">
+              <div className="flex justify-between items-center">
+                <div>
+                  <h2 className="text-2xl font-black text-white">Tax Center</h2>
+                  <p className="text-xs text-slate-500">Schedule C synthesis and deduction summary.</p>
+                </div>
+                <button onClick={generateTaxPDF} className="bg-indigo-600 hover:bg-indigo-500 text-white px-5 py-2.5 rounded-xl text-xs font-black uppercase flex items-center gap-2 transition-all shadow-lg active:scale-95">
+                  <Download size={18} /> Export PDF
+                </button>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div className="bg-[#121216] border border-white/5 rounded-3xl p-6">
+                  <div className="text-[10px] text-slate-500 uppercase font-bold mb-2">Gross Income</div>
+                  <div className="text-3xl font-black text-white">${taxSummary.grossIncome.toLocaleString()}</div>
+                </div>
+                <div className="bg-[#121216] border border-white/5 rounded-3xl p-6">
+                  <div className="text-[10px] text-slate-500 uppercase font-bold mb-2">Total Expenses</div>
+                  <div className="text-3xl font-black text-rose-400">${taxSummary.totalExpenses.toLocaleString()}</div>
+                </div>
+                <div className="bg-[#121216] border border-emerald-500/20 rounded-3xl p-6">
+                  <div className="text-[10px] text-slate-500 uppercase font-bold mb-2">Net Profit</div>
+                  <div className="text-3xl font-black text-emerald-400">${taxSummary.netProfit.toLocaleString()}</div>
+                </div>
+              </div>
+              <div className="bg-[#121216] border border-white/5 rounded-3xl p-8">
+                <h3 className="text-lg font-black text-white mb-6">Expenses by Category</h3>
+                <div className="space-y-4">
+                  {Object.entries(taxSummary.expensesByCategory).map(([cat, val]) => (
+                    <div key={cat} className="flex items-center justify-between p-4 bg-white/[0.02] rounded-2xl">
+                      <span className="text-sm font-bold text-white">{cat}</span>
+                      <span className="font-mono text-indigo-400">${val.toLocaleString()}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'assets' && (
+            <div className="space-y-6 animate-in fade-in duration-500">
+              <div className="flex justify-between items-center">
+                <div>
+                  <h2 className="text-2xl font-black text-white">Asset Vault</h2>
+                  <p className="text-xs text-slate-500">Company documents, branding, and resources.</p>
+                </div>
+                <button onClick={() => setShowModal('asset')} className="bg-indigo-600 hover:bg-indigo-500 text-white px-5 py-2.5 rounded-xl text-xs font-black uppercase flex items-center gap-2 transition-all shadow-lg active:scale-95">
+                  <Plus size={18} /> Upload Asset
+                </button>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                {assets.map(asset => (
+                  <div key={asset.id} className="bg-[#121216] border border-white/5 rounded-3xl p-6 hover:border-indigo-500/30 transition-all group">
+                    <div className="flex justify-between items-start mb-4">
+                      <div className="p-3 bg-indigo-500/10 rounded-2xl">
+                        {asset.type.includes('image') ? <ImageIcon size={20} className="text-indigo-400" /> : <FileText size={20} className="text-indigo-400" />}
+                      </div>
+                      <span className="text-[9px] font-black px-2 py-1 rounded-lg bg-white/5 text-slate-500 uppercase">{asset.category}</span>
+                    </div>
+                    <h3 className="text-sm font-bold text-white mb-1 truncate group-hover:text-indigo-400 transition-colors">{asset.name}</h3>
+                    <p className="text-[10px] text-slate-500">{asset.size || 'Unknown size'}</p>
+                    <div className="flex justify-end gap-2 mt-4 pt-4 border-t border-white/5">
+                      <button onClick={async () => { if(confirm('Delete this asset?')) { await db.assets.delete(asset.id); setAssets(prev => prev.filter(x => x.id !== asset.id)); }}} className="p-2 hover:text-rose-500 transition-colors"><Trash2 size={16}/></button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {assets.length === 0 && (
+                <div className="text-center py-20 text-slate-500">
+                  <HardDrive size={48} className="mx-auto mb-4 opacity-30" />
+                  <p className="text-sm">No assets yet. Upload your first file.</p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {activeTab === 'chat' && (
+            <div className="h-[calc(100vh-12rem)] flex flex-col animate-in fade-in duration-500">
+              <div className="flex-1 overflow-y-auto custom-scrollbar space-y-6 pb-4">
+                {chatMessages.map(msg => (
+                  <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                    <div className={`max-w-[80%] p-6 rounded-3xl ${
+                      msg.role === 'user' 
+                        ? 'bg-indigo-600 text-white' 
+                        : 'bg-[#121216] border border-white/5 text-slate-300'
+                    }`}>
+                      <p className="text-sm leading-relaxed whitespace-pre-wrap">{msg.content}</p>
+                    </div>
+                  </div>
+                ))}
+                {isTyping && (
+                  <div className="flex justify-start">
+                    <div className="bg-[#121216] border border-white/5 p-6 rounded-3xl">
+                      <div className="flex gap-1">
+                        <div className="w-2 h-2 bg-indigo-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
+                        <div className="w-2 h-2 bg-indigo-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
+                        <div className="w-2 h-2 bg-indigo-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                <div ref={chatEndRef} />
+              </div>
+              <form onSubmit={handleSendMessage} className="flex gap-4 pt-4 border-t border-white/5">
+                <input 
+                  name="chatInput" 
+                  type="text" 
+                  placeholder="Ask the Tax Strategist..." 
+                  className="flex-1 bg-[#121216] border border-white/10 rounded-2xl py-4 px-6 text-sm text-white placeholder:text-slate-600 focus:border-indigo-500 outline-none transition-all"
+                />
+                <button type="submit" disabled={isTyping} className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white p-4 rounded-2xl transition-all">
+                  <Send size={20} />
+                </button>
+              </form>
+            </div>
+          )}
         </div>
       </main>
 
