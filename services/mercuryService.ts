@@ -1,7 +1,10 @@
 
 import { Transaction } from "../types";
 
-const MERCURY_API_BASE = "https://api.mercury.com/api/v1";
+// Use proxy in development to bypass CORS, direct API in production
+const MERCURY_API_BASE = import.meta.env.DEV 
+  ? "/api/mercury"  // Vite proxy handles this
+  : "https://api.mercury.com/api/v1";
 
 /**
  * Interface for Mercury's API Account format

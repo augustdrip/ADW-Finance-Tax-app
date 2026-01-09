@@ -8,6 +8,15 @@ export default defineConfig(({ mode }) => {
       server: {
         port: 3000,
         host: '0.0.0.0',
+        proxy: {
+          // Proxy Mercury API calls to bypass CORS
+          '/api/mercury': {
+            target: 'https://api.mercury.com',
+            changeOrigin: true,
+            rewrite: (path) => path.replace(/^\/api\/mercury/, '/api/v1'),
+            secure: true,
+          }
+        }
       },
       plugins: [react()],
       define: {
