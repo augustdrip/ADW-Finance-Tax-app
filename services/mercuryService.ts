@@ -213,15 +213,48 @@ export const mercuryService = {
   },
 
   /**
+   * Fetches account balances by type (checking, savings)
+   * @param apiKey - Optional. If not provided, uses MERCURY_API_KEY from .env.local
+   */
+  async fetchAccountBalances(apiKey?: string): Promise<{ total: number; checking: number; savings: number; accounts: Array<{ name: string; type: string; balance: number }> }> {
+    const key = apiKey || ENV_MERCURY_KEY;
+    const accounts = await this.fetchAccounts(key);
+    console.log("[Mercury] All accounts:", accounts.map(a => ({ 
+      name: a.name, 
+      type: a.type, 
+      availableBalance: a.availableBalance, 
+      currentBalance: a.currentBalance 
+    })));
+    
+    let checking = 0;
+    let savings = 0;
+    const accountDetails: Array<{ name: string; type: string; balance: number }> = [];
+    
+    accounts.forEach(acc => {
+      const balance = acc.availableBalance || 0;
+      accountDetails.push({ name: acc.name, type: acc.type, balance });
+      
+      // Mercury account types: checking, savings, etc.
+      if (acc.type?.toLowerCase().includes('saving') || acc.name?.toLowerCase().includes('saving')) {
+        savings += balance;
+      } else {
+        // Default to checking for operating/checking accounts
+        checking += balance;
+      }
+    });
+    
+    const total = checking + savings;
+    console.log("[Mercury] Checking:", checking, "Savings:", savings, "Total:", total);
+    
+    return { total, checking, savings, accounts: accountDetails };
+  },
+
+  /**
    * Fetches the total balance across all Mercury accounts
    * @param apiKey - Optional. If not provided, uses MERCURY_API_KEY from .env.local
    */
   async fetchTotalBalance(apiKey?: string): Promise<number> {
-    const key = apiKey || ENV_MERCURY_KEY;
-    const accounts = await this.fetchAccounts(key);
-    console.log("[Mercury] Accounts for balance:", accounts.map(a => ({ name: a.name, availableBalance: a.availableBalance, currentBalance: a.currentBalance })));
-    const total = accounts.reduce((sum, acc) => sum + (acc.availableBalance || 0), 0);
-    console.log("[Mercury] Total balance (cents):", total);
+    const { total } = await this.fetchAccountBalances(apiKey);
     return total;
   },
 

@@ -269,6 +269,10 @@ const App: React.FC = () => {
   }, [transactions, currentMonth, activeTab]);
 
   const [bankBalance, setBankBalance] = useState<number>(parseFloat(localStorage.getItem('mercury_balance') || '0'));
+  const [accountBalances, setAccountBalances] = useState<{ checking: number; savings: number }>(() => {
+    const saved = localStorage.getItem('mercury_accounts');
+    return saved ? JSON.parse(saved) : { checking: 0, savings: 0 };
+  });
 
   const stats: DashboardStats = useMemo(() => {
     const totalSpent = transactions.reduce((sum, t) => sum + t.amount, 0);
@@ -394,12 +398,15 @@ const App: React.FC = () => {
         return [...processedTransactions, ...nonMercuryTransactions];
       });
 
-      // Also fetch the real bank balance
+      // Also fetch the real bank balance with account breakdown
       try {
-        const balance = await mercuryService.fetchTotalBalance(mercuryApiKey || undefined);
+        const balanceData = await mercuryService.fetchAccountBalances(mercuryApiKey || undefined);
         // Mercury returns balance in dollars (not cents)
-        setBankBalance(balance);
-        localStorage.setItem('mercury_balance', String(balance));
+        setBankBalance(balanceData.total);
+        setAccountBalances({ checking: balanceData.checking, savings: balanceData.savings });
+        localStorage.setItem('mercury_balance', String(balanceData.total));
+        localStorage.setItem('mercury_accounts', JSON.stringify({ checking: balanceData.checking, savings: balanceData.savings }));
+        console.log("[Mercury] Account balances saved:", balanceData);
       } catch (balanceError) {
         console.warn("Could not fetch balance:", balanceError);
       }
@@ -727,25 +734,46 @@ const App: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Mercury Bank Status Card */}
+                {/* Mercury Bank Status Card - Checking */}
                 <div className="bg-[#121216] border border-indigo-500/20 rounded-[2rem] p-8 shadow-2xl relative overflow-hidden group">
                    <div className="relative z-10 space-y-4">
                       <div className="flex justify-between items-start">
                         <div className="p-3 bg-indigo-600 rounded-2xl text-white shadow-xl shadow-indigo-600/20 group-hover:rotate-12 transition-transform">
                           <Globe size={24} />
                         </div>
-                        <span className="text-[8px] font-black text-indigo-400 border border-indigo-400/20 px-2 py-1 rounded-full uppercase tracking-widest">Live Liquidity</span>
+                        <span className="text-[8px] font-black text-indigo-400 border border-indigo-400/20 px-2 py-1 rounded-full uppercase tracking-widest">Checking</span>
                       </div>
                       <div>
-                        <div className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mb-1">Total Available Cash</div>
-                        <div className="text-3xl font-black text-white">${stats.bankBalance?.toLocaleString()}</div>
+                        <div className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mb-1">Operating Account</div>
+                        <div className="text-3xl font-black text-white">${accountBalances.checking.toLocaleString()}</div>
                       </div>
                       <div className="pt-4 border-t border-white/5 flex justify-between items-center">
                          <div className="text-[9px] font-bold text-slate-500">Synced: {stats.lastSync}</div>
                          <button onClick={handleMercurySync} disabled={isMercurySyncing} className="text-[10px] font-black text-indigo-400 uppercase hover:text-white flex items-center gap-1.5 transition-colors">
                            {isMercurySyncing ? <Loader2 size={12} className="animate-spin" /> : <RefreshCcw size={12} />} 
-                           Sync Now
+                           Sync
                          </button>
+                      </div>
+                   </div>
+                </div>
+
+                {/* Mercury Bank Status Card - Savings */}
+                <div className="bg-[#121216] border border-emerald-500/20 rounded-[2rem] p-8 shadow-2xl relative overflow-hidden group">
+                   <div className="relative z-10 space-y-4">
+                      <div className="flex justify-between items-start">
+                        <div className="p-3 bg-emerald-600 rounded-2xl text-white shadow-xl shadow-emerald-600/20 group-hover:rotate-12 transition-transform">
+                          <ShieldCheck size={24} />
+                        </div>
+                        <span className="text-[8px] font-black text-emerald-400 border border-emerald-400/20 px-2 py-1 rounded-full uppercase tracking-widest">Savings</span>
+                      </div>
+                      <div>
+                        <div className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mb-1">Reserve Account</div>
+                        <div className="text-3xl font-black text-emerald-400">${accountBalances.savings.toLocaleString()}</div>
+                      </div>
+                      <div className="pt-4 border-t border-white/5">
+                         <div className="text-[9px] font-bold text-slate-500">
+                           Total Liquidity: <span className="text-white">${stats.bankBalance?.toLocaleString()}</span>
+                         </div>
                       </div>
                    </div>
                 </div>
