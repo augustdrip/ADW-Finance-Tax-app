@@ -85,7 +85,10 @@ export interface TaxFormSummary {
   year: number;
   grossIncome: number;
   expensesByCategory: Record<string, number>;
+  scheduleC: Record<string, number>;
   totalExpenses: number;
   netProfit: number;
   potentialCredits: number;
+  estimatedSelfEmploymentTax: number;
+  estimatedQBI: number;
 }

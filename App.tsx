@@ -32,6 +32,8 @@ import {
   ChevronUp,
   Calendar,
   Calculator,
+  Percent,
+  DollarSign,
   Printer,
   FileText,
   Zap,
@@ -53,7 +55,6 @@ import {
   Lock,
   Brain,
   Lightbulb,
-  DollarSign,
   Rocket,
   TrendingDown,
   Activity,
@@ -291,24 +292,73 @@ const App: React.FC = () => {
     });
   }, [transactions]);
 
+  // Schedule C line item mapping - maps expense categories to IRS Schedule C lines
+  const SCHEDULE_C_LINES: Record<string, { line: string; label: string; categories: string[] }> = {
+    'line8': { line: '8', label: 'Advertising', categories: ['Advertising', 'Marketing', 'Ads'] },
+    'line9': { line: '9', label: 'Car and truck expenses', categories: ['Transportation', 'Vehicle', 'Car', 'Mileage', 'Uber', 'Lyft'] },
+    'line10': { line: '10', label: 'Commissions and fees', categories: ['Commissions', 'Fees', 'Platform Fees'] },
+    'line11': { line: '11', label: 'Contract labor', categories: ['Contractors', 'Contract Labor', 'Freelancers', 'Subcontractors'] },
+    'line13': { line: '13', label: 'Depreciation (Section 179)', categories: ['Depreciation', 'Hardware', 'Equipment'] },
+    'line14': { line: '14', label: 'Employee benefit programs', categories: ['Benefits', 'Health Insurance', 'Employee Benefits'] },
+    'line15': { line: '15', label: 'Insurance (other than health)', categories: ['Insurance', 'Liability Insurance', 'Business Insurance'] },
+    'line17': { line: '17', label: 'Legal and professional services', categories: ['Legal', 'Professional Services', 'Accounting', 'Attorney', 'CPA'] },
+    'line18': { line: '18', label: 'Office expense', categories: ['Office', 'Office Supplies', 'Supplies'] },
+    'line20b': { line: '20b', label: 'Rent (other business property)', categories: ['Rent', 'Lease', 'Office Rent', 'Coworking'] },
+    'line21': { line: '21', label: 'Repairs and maintenance', categories: ['Repairs', 'Maintenance'] },
+    'line22': { line: '22', label: 'Supplies', categories: ['Supplies', 'Materials'] },
+    'line23': { line: '23', label: 'Taxes and licenses', categories: ['Taxes', 'Licenses', 'Permits', 'Business License'] },
+    'line24a': { line: '24a', label: 'Travel', categories: ['Travel', 'Lodging', 'Hotels', 'Flights'] },
+    'line24b': { line: '24b', label: 'Deductible meals', categories: ['Meals', 'Business Meals', 'Dining'] },
+    'line25': { line: '25', label: 'Utilities', categories: ['Utilities', 'Electric', 'Internet', 'Phone'] },
+    'line27a': { line: '27a', label: 'Other expenses', categories: ['Software/SaaS', 'Software', 'SaaS', 'Subscriptions', 'Miscellaneous', 'Other'] }
+  };
+
   const taxSummary: TaxFormSummary = useMemo(() => {
     const grossIncome = invoices.filter(inv => inv.status === 'Paid').reduce((sum, inv) => sum + inv.amount, 0);
     const expensesByCategory: Record<string, number> = {};
+    const scheduleC: Record<string, number> = {};
     let totalDeductionsValue = 0;
+
+    // Initialize Schedule C lines
+    Object.keys(SCHEDULE_C_LINES).forEach(key => {
+      scheduleC[key] = 0;
+    });
 
     transactions.forEach(t => {
       const amount = t.analysis?.deductibleAmount || t.amount;
       expensesByCategory[t.category] = (expensesByCategory[t.category] || 0) + amount;
       if (t.analysis) totalDeductionsValue += t.analysis.deductibleAmount;
+
+      // Map to Schedule C lines
+      let mapped = false;
+      for (const [lineKey, lineInfo] of Object.entries(SCHEDULE_C_LINES)) {
+        if (lineInfo.categories.some(cat => 
+          t.category.toLowerCase().includes(cat.toLowerCase()) ||
+          cat.toLowerCase().includes(t.category.toLowerCase())
+        )) {
+          scheduleC[lineKey] += amount;
+          mapped = true;
+          break;
+        }
+      }
+      // Default to "Other expenses" if no match
+      if (!mapped) {
+        scheduleC['line27a'] += amount;
+      }
     });
+
+    const totalExpenses = Object.values(expensesByCategory).reduce((a, b) => a + b, 0);
 
     return {
       year: new Date().getFullYear(),
       grossIncome,
       expensesByCategory,
-      totalExpenses: Object.values(expensesByCategory).reduce((a, b) => a + b, 0),
-      netProfit: grossIncome - Object.values(expensesByCategory).reduce((a, b) => a + b, 0),
-      potentialCredits: totalDeductionsValue * 0.06
+      scheduleC,
+      totalExpenses,
+      netProfit: grossIncome - totalExpenses,
+      potentialCredits: totalDeductionsValue * 0.06,
+      estimatedSelfEmploymentTax: Math.max(0, (grossIncome - totalExpenses) * 0.9235 * 0.153),
+      estimatedQBI: Math.max(0, (grossIncome - totalExpenses) * 0.20)
     };
   }, [transactions, invoices]);
 
@@ -1433,38 +1483,269 @@ const App: React.FC = () => {
 
           {activeTab === 'tax' && (
             <div className="space-y-6 animate-in fade-in duration-500">
+              {/* Header */}
               <div className="flex justify-between items-center">
                 <div>
                   <h2 className="text-2xl font-black text-white">Tax Center</h2>
-                  <p className="text-xs text-slate-500">Schedule C synthesis and deduction summary.</p>
+                  <p className="text-xs text-slate-500">Schedule C (Form 1040) synthesis for {taxSummary.year}</p>
                 </div>
-                <button onClick={generateTaxPDF} className="bg-indigo-600 hover:bg-indigo-500 text-white px-5 py-2.5 rounded-xl text-xs font-black uppercase flex items-center gap-2 transition-all shadow-lg active:scale-95">
-                  <Download size={18} /> Export PDF
-                </button>
+                <div className="flex gap-3">
+                  <a 
+                    href="https://www.irs.gov/pub/irs-pdf/f1040sc.pdf"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="bg-white/5 hover:bg-white/10 border border-white/10 text-white px-5 py-2.5 rounded-xl text-xs font-black uppercase flex items-center gap-2 transition-all"
+                  >
+                    <FileText size={16} /> View IRS Form
+                  </a>
+                  <button onClick={generateTaxPDF} className="bg-indigo-600 hover:bg-indigo-500 text-white px-5 py-2.5 rounded-xl text-xs font-black uppercase flex items-center gap-2 transition-all shadow-lg active:scale-95">
+                    <Download size={18} /> Export Report
+                  </button>
+                </div>
               </div>
+
+              {/* Schedule C Header Card */}
+              <div className="bg-gradient-to-r from-indigo-600/20 to-purple-600/20 border border-indigo-500/30 rounded-3xl p-6">
+                <div className="flex items-center gap-4 mb-4">
+                  <div className="p-3 bg-indigo-500/20 rounded-xl">
+                    <Calculator size={24} className="text-indigo-400" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-black text-white">SCHEDULE C (Form 1040)</h3>
+                    <p className="text-xs text-slate-400">Profit or Loss From Business (Sole Proprietorship)</p>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs">
+                  <div>
+                    <span className="text-slate-500 block mb-1">Business Name</span>
+                    <span className="text-white font-bold">{COMPANY_INFO.name}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 block mb-1">Tax Year</span>
+                    <span className="text-white font-bold">{taxSummary.year}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 block mb-1">Principal Business</span>
+                    <span className="text-white font-bold">Software Development</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 block mb-1">Business Code</span>
+                    <span className="text-white font-bold">541511</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Part I: Income */}
+              <div className="bg-[#121216] border border-white/5 rounded-3xl overflow-hidden">
+                <div className="bg-emerald-500/10 border-b border-emerald-500/20 px-6 py-4">
+                  <h3 className="text-sm font-black text-emerald-400 uppercase tracking-wider">Part I — Income</h3>
+                </div>
+                <div className="p-6 space-y-4">
+                  <div className="flex items-center justify-between p-4 bg-white/[0.02] rounded-xl border border-white/5">
+                    <div className="flex items-center gap-3">
+                      <span className="text-[10px] font-mono text-slate-500 w-8">1</span>
+                      <span className="text-sm text-slate-300">Gross receipts or sales</span>
+                    </div>
+                    <span className="font-mono text-lg font-bold text-emerald-400">${taxSummary.grossIncome.toLocaleString()}</span>
+                  </div>
+                  <div className="flex items-center justify-between p-4 bg-white/[0.02] rounded-xl border border-white/5">
+                    <div className="flex items-center gap-3">
+                      <span className="text-[10px] font-mono text-slate-500 w-8">2</span>
+                      <span className="text-sm text-slate-300">Returns and allowances</span>
+                    </div>
+                    <span className="font-mono text-lg font-bold text-slate-500">$0</span>
+                  </div>
+                  <div className="flex items-center justify-between p-4 bg-emerald-500/10 rounded-xl border border-emerald-500/20">
+                    <div className="flex items-center gap-3">
+                      <span className="text-[10px] font-mono text-emerald-400 w-8">7</span>
+                      <span className="text-sm font-bold text-white">Gross income</span>
+                    </div>
+                    <span className="font-mono text-xl font-black text-emerald-400">${taxSummary.grossIncome.toLocaleString()}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Part II: Expenses */}
+              <div className="bg-[#121216] border border-white/5 rounded-3xl overflow-hidden">
+                <div className="bg-rose-500/10 border-b border-rose-500/20 px-6 py-4">
+                  <h3 className="text-sm font-black text-rose-400 uppercase tracking-wider">Part II — Expenses</h3>
+                </div>
+                <div className="p-6">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {Object.entries(SCHEDULE_C_LINES).map(([key, info]) => {
+                      const amount = taxSummary.scheduleC[key] || 0;
+                      if (amount === 0) return null;
+                      return (
+                        <div key={key} className="flex items-center justify-between p-4 bg-white/[0.02] rounded-xl border border-white/5 hover:border-indigo-500/30 transition-colors">
+                          <div className="flex items-center gap-3">
+                            <span className="text-[10px] font-mono text-slate-500 w-8">{info.line}</span>
+                            <span className="text-sm text-slate-300">{info.label}</span>
+                          </div>
+                          <span className="font-mono text-sm font-bold text-rose-400">${amount.toLocaleString()}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  
+                  {/* Totals */}
+                  <div className="mt-6 pt-6 border-t border-white/10 space-y-4">
+                    <div className="flex items-center justify-between p-4 bg-rose-500/10 rounded-xl border border-rose-500/20">
+                      <div className="flex items-center gap-3">
+                        <span className="text-[10px] font-mono text-rose-400 w-8">28</span>
+                        <span className="text-sm font-bold text-white">Total expenses</span>
+                      </div>
+                      <span className="font-mono text-xl font-black text-rose-400">${taxSummary.totalExpenses.toLocaleString()}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Net Profit/Loss */}
+              <div className="bg-gradient-to-r from-emerald-600/20 to-cyan-600/20 border border-emerald-500/30 rounded-3xl p-6">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-4">
+                    <div className="p-3 bg-emerald-500/20 rounded-xl">
+                      <TrendingUp size={24} className="text-emerald-400" />
+                    </div>
+                    <div>
+                      <span className="text-[10px] font-mono text-emerald-400 block">Line 31</span>
+                      <span className="text-lg font-black text-white">Net Profit (or Loss)</span>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <span className={`font-mono text-4xl font-black ${taxSummary.netProfit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                      ${Math.abs(taxSummary.netProfit).toLocaleString()}
+                    </span>
+                    {taxSummary.netProfit < 0 && <span className="text-rose-400 text-xs block mt-1">(Loss)</span>}
+                  </div>
+                </div>
+              </div>
+
+              {/* Tax Estimates */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <div className="bg-[#121216] border border-white/5 rounded-3xl p-6">
-                  <div className="text-[10px] text-slate-500 uppercase font-bold mb-2">Gross Income</div>
-                  <div className="text-3xl font-black text-white">${taxSummary.grossIncome.toLocaleString()}</div>
+                  <div className="flex items-center gap-2 mb-3">
+                    <Percent size={16} className="text-amber-400" />
+                    <span className="text-[10px] text-slate-500 uppercase font-bold">Self-Employment Tax</span>
+                  </div>
+                  <div className="text-2xl font-black text-amber-400">${taxSummary.estimatedSelfEmploymentTax.toLocaleString(undefined, {maximumFractionDigits: 0})}</div>
+                  <p className="text-[10px] text-slate-500 mt-2">15.3% of 92.35% of net profit</p>
                 </div>
                 <div className="bg-[#121216] border border-white/5 rounded-3xl p-6">
-                  <div className="text-[10px] text-slate-500 uppercase font-bold mb-2">Total Expenses</div>
-                  <div className="text-3xl font-black text-rose-400">${taxSummary.totalExpenses.toLocaleString()}</div>
+                  <div className="flex items-center gap-2 mb-3">
+                    <ShieldCheck size={16} className="text-cyan-400" />
+                    <span className="text-[10px] text-slate-500 uppercase font-bold">QBI Deduction</span>
+                  </div>
+                  <div className="text-2xl font-black text-cyan-400">${taxSummary.estimatedQBI.toLocaleString(undefined, {maximumFractionDigits: 0})}</div>
+                  <p className="text-[10px] text-slate-500 mt-2">20% of qualified business income</p>
                 </div>
-                <div className="bg-[#121216] border border-emerald-500/20 rounded-3xl p-6">
-                  <div className="text-[10px] text-slate-500 uppercase font-bold mb-2">Net Profit</div>
-                  <div className="text-3xl font-black text-emerald-400">${taxSummary.netProfit.toLocaleString()}</div>
+                <div className="bg-[#121216] border border-white/5 rounded-3xl p-6">
+                  <div className="flex items-center gap-2 mb-3">
+                    <DollarSign size={16} className="text-emerald-400" />
+                    <span className="text-[10px] text-slate-500 uppercase font-bold">Potential Credits</span>
+                  </div>
+                  <div className="text-2xl font-black text-emerald-400">${taxSummary.potentialCredits.toLocaleString(undefined, {maximumFractionDigits: 0})}</div>
+                  <p className="text-[10px] text-slate-500 mt-2">Based on analyzed deductions</p>
                 </div>
               </div>
+
+              {/* Schedule C Reference */}
+              <div className="bg-[#121216] border border-white/5 rounded-3xl overflow-hidden">
+                <div className="bg-indigo-500/10 border-b border-indigo-500/20 px-6 py-4 flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <BookOpen size={18} className="text-indigo-400" />
+                    <h3 className="text-sm font-black text-indigo-400 uppercase tracking-wider">Schedule C Reference Guide</h3>
+                  </div>
+                  <a 
+                    href="https://www.irs.gov/forms-pubs/about-schedule-c-form-1040"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-indigo-400 hover:text-indigo-300 flex items-center gap-1"
+                  >
+                    IRS Instructions <ExternalLink size={12} />
+                  </a>
+                </div>
+                <div className="p-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  <div className="p-4 bg-white/[0.02] rounded-xl border border-white/5">
+                    <h4 className="text-xs font-bold text-white mb-2 flex items-center gap-2">
+                      <span className="p-1 bg-emerald-500/20 rounded text-emerald-400 text-[10px]">Part I</span>
+                      Income
+                    </h4>
+                    <p className="text-[10px] text-slate-500">Lines 1-7: Report gross receipts, returns, cost of goods sold, and calculate gross income.</p>
+                  </div>
+                  <div className="p-4 bg-white/[0.02] rounded-xl border border-white/5">
+                    <h4 className="text-xs font-bold text-white mb-2 flex items-center gap-2">
+                      <span className="p-1 bg-rose-500/20 rounded text-rose-400 text-[10px]">Part II</span>
+                      Expenses
+                    </h4>
+                    <p className="text-[10px] text-slate-500">Lines 8-27: Deductible business expenses including advertising, car, supplies, and more.</p>
+                  </div>
+                  <div className="p-4 bg-white/[0.02] rounded-xl border border-white/5">
+                    <h4 className="text-xs font-bold text-white mb-2 flex items-center gap-2">
+                      <span className="p-1 bg-amber-500/20 rounded text-amber-400 text-[10px]">Part III</span>
+                      Cost of Goods Sold
+                    </h4>
+                    <p className="text-[10px] text-slate-500">Lines 33-42: For businesses with inventory (typically not applicable for services).</p>
+                  </div>
+                  <div className="p-4 bg-white/[0.02] rounded-xl border border-white/5">
+                    <h4 className="text-xs font-bold text-white mb-2 flex items-center gap-2">
+                      <span className="p-1 bg-cyan-500/20 rounded text-cyan-400 text-[10px]">Part IV</span>
+                      Vehicle Info
+                    </h4>
+                    <p className="text-[10px] text-slate-500">Lines 43-47: Required if claiming car/truck expenses without Form 4562.</p>
+                  </div>
+                  <div className="p-4 bg-white/[0.02] rounded-xl border border-white/5">
+                    <h4 className="text-xs font-bold text-white mb-2 flex items-center gap-2">
+                      <span className="p-1 bg-purple-500/20 rounded text-purple-400 text-[10px]">Part V</span>
+                      Other Expenses
+                    </h4>
+                    <p className="text-[10px] text-slate-500">Line 48: Additional expenses not covered in Lines 8-27.</p>
+                  </div>
+                  <div className="p-4 bg-white/[0.02] rounded-xl border border-white/5">
+                    <h4 className="text-xs font-bold text-white mb-2 flex items-center gap-2">
+                      <span className="p-1 bg-indigo-500/20 rounded text-indigo-400 text-[10px]">§179</span>
+                      Depreciation
+                    </h4>
+                    <p className="text-[10px] text-slate-500">Section 179 allows immediate deduction of equipment purchases up to $1,160,000 (2024).</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Expenses by Category (Original) */}
               <div className="bg-[#121216] border border-white/5 rounded-3xl p-8">
-                <h3 className="text-lg font-black text-white mb-6">Expenses by Category</h3>
-                <div className="space-y-4">
-                  {Object.entries(taxSummary.expensesByCategory).map(([cat, val]) => (
-                    <div key={cat} className="flex items-center justify-between p-4 bg-white/[0.02] rounded-2xl">
-                      <span className="text-sm font-bold text-white">{cat}</span>
-                      <span className="font-mono text-indigo-400">${val.toLocaleString()}</span>
-                    </div>
-                  ))}
+                <h3 className="text-lg font-black text-white mb-6 flex items-center gap-3">
+                  <FolderOpen size={20} className="text-indigo-400" />
+                  Expenses by Business Category
+                </h3>
+                <div className="space-y-3">
+                  {Object.entries(taxSummary.expensesByCategory).length > 0 ? (
+                    Object.entries(taxSummary.expensesByCategory)
+                      .sort(([, a], [, b]) => (b as number) - (a as number))
+                      .map(([cat, val]) => {
+                        const amount = val as number;
+                        const percentage = (amount / taxSummary.totalExpenses) * 100;
+                        return (
+                          <div key={cat} className="group">
+                            <div className="flex items-center justify-between p-4 bg-white/[0.02] rounded-xl border border-white/5 hover:border-indigo-500/30 transition-colors">
+                              <div className="flex items-center gap-3">
+                                <div className="w-2 h-2 rounded-full bg-indigo-500"></div>
+                                <span className="text-sm font-bold text-white">{cat}</span>
+                                <span className="text-[10px] text-slate-500">({percentage.toFixed(1)}%)</span>
+                              </div>
+                              <span className="font-mono text-indigo-400 font-bold">${amount.toLocaleString()}</span>
+                            </div>
+                            <div className="mt-1 h-1 bg-white/5 rounded-full overflow-hidden">
+                              <div 
+                                className="h-full bg-gradient-to-r from-indigo-500 to-purple-500 transition-all duration-500"
+                                style={{ width: `${percentage}%` }}
+                              ></div>
+                            </div>
+                          </div>
+                        );
+                      })
+                  ) : (
+                    <p className="text-slate-500 text-sm text-center py-8">No expenses recorded yet. Sync with Mercury to import transactions.</p>
+                  )}
                 </div>
               </div>
             </div>
