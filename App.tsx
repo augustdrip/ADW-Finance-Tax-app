@@ -109,8 +109,46 @@ const App: React.FC = () => {
   const [isEnhancing, setIsEnhancing] = useState(false);
   const [isBulkAnalyzing, setIsBulkAnalyzing] = useState(false);
   const [showModal, setShowModal] = useState<'transaction' | 'invoice' | 'agreement' | 'asset' | 'mercury' | null>(null);
-  const [viewingAsset, setViewingAsset] = useState<CompanyAsset | null>(null); // For image lightbox
+  const [viewingAsset, setViewingAsset] = useState<CompanyAsset | null>(null); // For image/document lightbox
   const [uploadPreview, setUploadPreview] = useState<string | null>(null); // Preview for asset upload
+  
+  // Helper function to check if asset is viewable (image or PDF)
+  const isViewableAsset = (asset: CompanyAsset) => {
+    return asset.type.includes('image') || asset.type.includes('pdf');
+  };
+  
+  // Helper function to open document in new tab
+  const openDocumentInNewTab = (asset: CompanyAsset) => {
+    if (asset.url && asset.url.startsWith('data:')) {
+      // For base64 data URLs, open in new tab
+      const newWindow = window.open();
+      if (newWindow) {
+        if (asset.type.includes('pdf')) {
+          newWindow.document.write(`
+            <html>
+              <head><title>${asset.name}</title></head>
+              <body style="margin:0;padding:0;background:#1a1a1a;">
+                <embed src="${asset.url}" type="application/pdf" width="100%" height="100%" style="position:absolute;top:0;left:0;right:0;bottom:0;" />
+              </body>
+            </html>
+          `);
+        } else {
+          newWindow.document.write(`
+            <html>
+              <head><title>${asset.name}</title></head>
+              <body style="margin:0;display:flex;justify-content:center;align-items:center;min-height:100vh;background:#1a1a1a;">
+                <img src="${asset.url}" style="max-width:100%;max-height:100vh;" />
+              </body>
+            </html>
+          `);
+        }
+      }
+    } else if (asset.url && asset.url !== '#') {
+      window.open(asset.url, '_blank');
+    } else {
+      setNotification({ message: 'Document URL not available', type: 'alert' });
+    }
+  };
   const [mercuryApiKey, setMercuryApiKey] = useState<string>(localStorage.getItem('mercury_key') || '');
   const [lastSyncTime, setLastSyncTime] = useState<string>(localStorage.getItem('mercury_sync') || 'Never');
   
@@ -1472,13 +1510,27 @@ const App: React.FC = () => {
                           </div>
                         </div>
                       ) : (
-                        // Non-image file display
-                        <div className="h-40 flex items-center justify-center bg-gradient-to-br from-indigo-500/5 to-purple-500/5">
+                        // Non-image file display (PDFs and other documents)
+                        <div 
+                          className={`h-40 flex items-center justify-center bg-gradient-to-br from-indigo-500/5 to-purple-500/5 ${asset.type.includes('pdf') && asset.url && asset.url !== '#' ? 'cursor-pointer' : ''}`}
+                          onClick={() => {
+                            if (asset.type.includes('pdf') && asset.url && asset.url !== '#') {
+                              setViewingAsset(asset);
+                            }
+                          }}
+                        >
                           <div className="text-center">
-                            <div className="p-4 bg-indigo-500/10 rounded-2xl inline-block mb-2">
-                              <FileText size={32} className="text-indigo-400" />
+                            <div className={`p-4 rounded-2xl inline-block mb-2 transition-all duration-300 ${asset.type.includes('pdf') ? 'bg-rose-500/10 group-hover:bg-rose-500/20 group-hover:scale-110' : 'bg-indigo-500/10'}`}>
+                              <FileText size={32} className={asset.type.includes('pdf') ? 'text-rose-400' : 'text-indigo-400'} />
                             </div>
-                            <span className="block text-[9px] font-black px-2 py-1 rounded-lg bg-white/5 text-slate-500 uppercase">{asset.category}</span>
+                            <span className="block text-[9px] font-black px-2 py-1 rounded-lg bg-white/5 text-slate-500 uppercase">
+                              {asset.type.includes('pdf') ? 'PDF Document' : asset.category}
+                            </span>
+                            {asset.type.includes('pdf') && asset.url && asset.url !== '#' && (
+                              <span className="block text-[8px] text-indigo-400 mt-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <Eye size={10} className="inline mr-1" />Click to view
+                              </span>
+                            )}
                           </div>
                         </div>
                       )}
@@ -1489,14 +1541,14 @@ const App: React.FC = () => {
                       <h3 className="text-sm font-bold text-white mb-1 truncate group-hover:text-indigo-400 transition-colors">{asset.name}</h3>
                       <p className="text-[10px] text-slate-500">{asset.size || 'Unknown size'}</p>
                       <div className="flex justify-between items-center gap-2 mt-3 pt-3 border-t border-white/5">
-                        {asset.type.includes('image') && asset.url ? (
+                        {(asset.type.includes('image') || asset.type.includes('pdf')) && asset.url && asset.url !== '#' ? (
                           <button 
                             onClick={() => setViewingAsset(asset)}
                             className="text-[10px] text-indigo-400 hover:text-indigo-300 font-bold flex items-center gap-1"
                           >
-                            <Eye size={12} /> View Full
+                            <Eye size={12} /> {asset.type.includes('pdf') ? 'View PDF' : 'View Full'}
                           </button>
-                        ) : (
+                        ) : asset.url && asset.url !== '#' ? (
                           <a 
                             href={asset.url} 
                             target="_blank" 
@@ -1505,6 +1557,10 @@ const App: React.FC = () => {
                           >
                             <ExternalLink size={12} /> Open
                           </a>
+                        ) : (
+                          <span className="text-[10px] text-slate-500 flex items-center gap-1">
+                            <FileText size={12} /> No file
+                          </span>
                         )}
                         <button onClick={async () => { 
                             if(confirm('Delete this asset?')) { 
@@ -2300,19 +2356,32 @@ const App: React.FC = () => {
             className="absolute inset-0 bg-black/95 backdrop-blur-xl" 
             onClick={() => setViewingAsset(null)} 
           />
-          <div className="relative z-10 max-w-6xl max-h-[90vh] flex flex-col">
+          <div className={`relative z-10 flex flex-col ${viewingAsset.type.includes('pdf') ? 'w-full max-w-5xl h-[90vh]' : 'max-w-6xl max-h-[90vh]'}`}>
             {/* Header */}
             <div className="flex items-center justify-between mb-4 px-2">
               <div className="flex items-center gap-4">
-                <div className="p-3 bg-indigo-500/20 rounded-xl">
-                  <ImageIcon size={20} className="text-indigo-400" />
+                <div className={`p-3 rounded-xl ${viewingAsset.type.includes('pdf') ? 'bg-rose-500/20' : 'bg-indigo-500/20'}`}>
+                  {viewingAsset.type.includes('pdf') ? (
+                    <FileText size={20} className="text-rose-400" />
+                  ) : (
+                    <ImageIcon size={20} className="text-indigo-400" />
+                  )}
                 </div>
                 <div>
                   <h3 className="text-lg font-bold text-white">{viewingAsset.name}</h3>
-                  <p className="text-xs text-slate-500">{viewingAsset.size} • {viewingAsset.category}</p>
+                  <p className="text-xs text-slate-500">
+                    {viewingAsset.size} • {viewingAsset.category} • {viewingAsset.type.includes('pdf') ? 'PDF Document' : 'Image'}
+                  </p>
                 </div>
               </div>
               <div className="flex items-center gap-2">
+                <button 
+                  onClick={() => openDocumentInNewTab(viewingAsset)}
+                  className="p-3 bg-white/5 hover:bg-white/10 rounded-xl transition-colors"
+                  title="Open in new tab"
+                >
+                  <ExternalLink size={18} className="text-slate-400" />
+                </button>
                 <a 
                   href={viewingAsset.url}
                   download={viewingAsset.name}
@@ -2330,18 +2399,29 @@ const App: React.FC = () => {
               </div>
             </div>
             
-            {/* Image Container */}
-            <div className="relative bg-[#0a0a0a] rounded-2xl border border-white/10 overflow-hidden shadow-2xl">
-              <img 
-                src={viewingAsset.url} 
-                alt={viewingAsset.name}
-                className="max-w-full max-h-[75vh] object-contain mx-auto"
-              />
+            {/* Content Container - Image or PDF */}
+            <div className={`relative bg-[#0a0a0a] rounded-2xl border border-white/10 overflow-hidden shadow-2xl ${viewingAsset.type.includes('pdf') ? 'flex-1' : ''}`}>
+              {viewingAsset.type.includes('pdf') ? (
+                // PDF Viewer
+                <iframe 
+                  src={viewingAsset.url}
+                  title={viewingAsset.name}
+                  className="w-full h-full min-h-[70vh]"
+                  style={{ border: 'none' }}
+                />
+              ) : (
+                // Image Viewer
+                <img 
+                  src={viewingAsset.url} 
+                  alt={viewingAsset.name}
+                  className="max-w-full max-h-[75vh] object-contain mx-auto"
+                />
+              )}
             </div>
             
             {/* Footer hint */}
             <p className="text-center text-[10px] text-slate-600 mt-3">
-              Click outside or press ESC to close
+              Click outside or press ESC to close • Click "Open in new tab" for full screen
             </p>
           </div>
         </div>
