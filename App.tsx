@@ -152,6 +152,7 @@ const App: React.FC = () => {
     }
   };
   const [mercuryApiKey, setMercuryApiKey] = useState<string>(localStorage.getItem('mercury_key') || '');
+  const [mercuryKeyError, setMercuryKeyError] = useState<string | null>(null);
   const [lastSyncTime, setLastSyncTime] = useState<string>(localStorage.getItem('mercury_sync') || 'Never');
   
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
@@ -367,20 +368,44 @@ const App: React.FC = () => {
     };
   }, [transactions, invoices]);
 
-  const handleMercurySync = async () => {
+  const resetMercurySync = (opts?: { clearKey?: boolean; clearTransactions?: boolean }) => {
+    try {
+      if (opts?.clearKey) {
+        localStorage.removeItem('mercury_key');
+        setMercuryApiKey('');
+      }
+      if (opts?.clearTransactions) {
+        localStorage.removeItem('mercury_transactions');
+        setTransactions(prev => prev.filter(t => !t.bankVerified && !t.bankId));
+      }
+      localStorage.removeItem('mercury_sync');
+      localStorage.removeItem('mercury_balance');
+      localStorage.removeItem('mercury_accounts');
+      setLastSyncTime('Never');
+      setBankBalance(0);
+      setAccountBalances({ checking: 0, savings: 0 });
+      setMercuryKeyError(null);
+    } catch (e) {
+      console.warn('Failed to reset Mercury sync state:', e);
+    }
+  };
+
+  const handleMercurySync = async (overrideKey?: string) => {
     // Check for API key: env variable first, then localStorage
     const hasEnvKey = hasMercuryEnvKey();
-    if (!hasEnvKey && !mercuryApiKey) {
+    const keyToUse = overrideKey ?? (mercuryApiKey || undefined);
+    if (!hasEnvKey && !keyToUse) {
       setShowModal('mercury');
       return;
     }
 
     setIsMercurySyncing(true);
+    setMercuryKeyError(null);
     setNotification({ message: "Connecting to Mercury Protocol...", type: 'success' });
 
     try {
       // Call real Mercury API (uses env key if available, otherwise localStorage key)
-      const mercuryTransactions = await mercuryService.fetchTransactions(mercuryApiKey || undefined);
+      const mercuryTransactions = await mercuryService.fetchTransactions(keyToUse);
       
       // Process all Mercury transactions
       const processedTransactions = mercuryTransactions.map(t => ({
@@ -401,7 +426,7 @@ const App: React.FC = () => {
 
       // Also fetch the real bank balance with account breakdown
       try {
-        const balanceData = await mercuryService.fetchAccountBalances(mercuryApiKey || undefined);
+        const balanceData = await mercuryService.fetchAccountBalances(keyToUse);
         // Mercury returns balance in dollars (not cents)
         setBankBalance(balanceData.total);
         setAccountBalances({ checking: balanceData.checking, savings: balanceData.savings });
@@ -418,7 +443,15 @@ const App: React.FC = () => {
       setNotification({ message: `Sync Complete. ${mercuryTransactions.length} records retrieved from Mercury.`, type: 'success' });
     } catch (error: any) {
       console.error("Mercury Sync Error:", error);
-      setNotification({ message: error.message || "Mercury Connection Failed. Verify API Credentials.", type: 'alert' });
+      const msg = error?.message || "Mercury Connection Failed. Verify API Credentials.";
+      setNotification({ message: msg, type: 'alert' });
+
+      // If this looks like an auth/key issue, immediately re-open the vault so user can try again.
+      const looksLikeKeyIssue = /401|unauthorized|forbidden|api key|bearer|token|ipnotwhitelisted/i.test(String(msg));
+      if (looksLikeKeyIssue) {
+        setMercuryKeyError(String(msg));
+        setShowModal('mercury');
+      }
     } finally {
       setIsMercurySyncing(false);
     }
@@ -427,11 +460,17 @@ const App: React.FC = () => {
   const handleSaveMercuryKey = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const fd = new FormData(e.currentTarget);
-    const key = fd.get('apiKey') as string;
+    const key = String(fd.get('apiKey') || '').trim();
     setMercuryApiKey(key);
     localStorage.setItem('mercury_key', key);
+    // Reset sync timestamp so user isn't stuck with stale "Never/old" state after fixing key
+    localStorage.removeItem('mercury_sync');
+    setLastSyncTime('Never');
+    setMercuryKeyError(null);
     setShowModal(null);
     setNotification({ message: "Mercury API Key Vaulted.", type: 'success' });
+    // Immediately retry sync with the newly saved key
+    setTimeout(() => handleMercurySync(key), 0);
   };
 
   const handleEnhanceContext = async (vendor: string, amount: string) => {
@@ -2093,6 +2132,18 @@ const App: React.FC = () => {
                 <h3 className="text-2xl font-black text-white uppercase tracking-tight">Mercury Credential Vault</h3>
                 <p className="text-sm text-slate-500 leading-relaxed">Establish a read-only secure tunnel to your Mercury account for live expenditure verification.</p>
               </div>
+              {mercuryKeyError && (
+                <div className="w-full p-4 bg-rose-500/10 border border-rose-500/20 rounded-2xl text-left">
+                  <div className="flex items-start gap-2">
+                    <AlertCircle size={16} className="text-rose-400 mt-0.5 shrink-0" />
+                    <div>
+                      <div className="text-[10px] font-black text-rose-400 uppercase tracking-widest">Mercury Auth Error</div>
+                      <div className="text-xs text-slate-300 mt-1 break-words">{mercuryKeyError}</div>
+                      <div className="text-[10px] text-slate-500 mt-2">Paste the correct key below and we’ll retry immediately.</div>
+                    </div>
+                  </div>
+                </div>
+              )}
               <form onSubmit={handleSaveMercuryKey} className="w-full space-y-4">
                  <div className="space-y-1 text-left">
                     <label className="text-[10px] font-black text-slate-500 uppercase px-2">API API Bearer Token</label>
@@ -2108,6 +2159,22 @@ const App: React.FC = () => {
                  <div className="flex items-center gap-3 p-4 bg-indigo-500/5 border border-indigo-500/10 rounded-2xl text-[10px] text-slate-400 italic">
                     <ShieldCheck size={16} className="text-indigo-500 shrink-0" />
                     Tokens are vaulted locally and never shared with the AI or external servers.
+                 </div>
+                 <div className="flex gap-2">
+                   <button
+                     type="button"
+                     onClick={() => resetMercurySync({ clearKey: true })}
+                     className="flex-1 py-3 bg-white/5 hover:bg-white/10 text-slate-300 font-black uppercase tracking-widest rounded-2xl transition-all text-[10px]"
+                   >
+                     Clear Key
+                   </button>
+                   <button
+                     type="button"
+                     onClick={() => resetMercurySync({ clearKey: false })}
+                     className="flex-1 py-3 bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 font-black uppercase tracking-widest rounded-2xl transition-all text-[10px]"
+                   >
+                     Reset Sync
+                   </button>
                  </div>
                  <button type="submit" className="w-full py-5 bg-indigo-600 hover:bg-indigo-500 text-white font-black uppercase tracking-[0.2em] rounded-2xl transition-all shadow-xl active:scale-95">Establish Connection</button>
               </form>
