@@ -109,9 +109,10 @@ const App: React.FC = () => {
   const [isMercurySyncing, setIsMercurySyncing] = useState(false);
   const [isEnhancing, setIsEnhancing] = useState(false);
   const [isBulkAnalyzing, setIsBulkAnalyzing] = useState(false);
-  const [showModal, setShowModal] = useState<'transaction' | 'invoice' | 'agreement' | 'asset' | 'mercury' | null>(null);
+  const [showModal, setShowModal] = useState<'transaction' | 'invoice' | 'agreement' | 'asset' | 'mercury' | 'receipt' | null>(null);
   const [viewingAsset, setViewingAsset] = useState<CompanyAsset | null>(null); // For image/document lightbox
   const [uploadPreview, setUploadPreview] = useState<string | null>(null); // Preview for asset upload
+  const [receiptUploadTransaction, setReceiptUploadTransaction] = useState<Transaction | null>(null); // For receipt upload
   
   // Helper function to check if asset is viewable (image or PDF)
   const isViewableAsset = (asset: CompanyAsset) => {
@@ -551,6 +552,69 @@ const App: React.FC = () => {
       console.error(e);
       setNotification({ message: "Failed to delete record.", type: 'alert' });
     }
+  };
+
+  const handleReceiptUpload = async (transactionId: string, file: File) => {
+    if (!file) return;
+    
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const base64String = reader.result as string;
+      const newAttachment: Attachment = {
+        id: `receipt_${Date.now()}`,
+        name: file.name,
+        type: file.type,
+        url: base64String,
+        dateAdded: new Date().toISOString().split('T')[0]
+      };
+      
+      setTransactions(prev => {
+        const updated = prev.map(t => {
+          if (t.id === transactionId) {
+            return {
+              ...t,
+              attachments: [...(t.attachments || []), newAttachment]
+            };
+          }
+          return t;
+        });
+        
+        // Update localStorage
+        const mercuryTransactions = updated.filter(t => t.bankVerified || t.bankId);
+        localStorage.setItem('mercury_transactions', JSON.stringify(mercuryTransactions));
+        localStorage.setItem('transactions', JSON.stringify(updated));
+        
+        return updated;
+      });
+      
+      setShowModal(null);
+      setReceiptUploadTransaction(null);
+      setUploadPreview(null);
+      setNotification({ message: `Receipt "${file.name}" attached successfully!`, type: 'success' });
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleDeleteReceipt = (transactionId: string, attachmentId: string) => {
+    setTransactions(prev => {
+      const updated = prev.map(t => {
+        if (t.id === transactionId) {
+          return {
+            ...t,
+            attachments: (t.attachments || []).filter(a => a.id !== attachmentId)
+          };
+        }
+        return t;
+      });
+      
+      // Update localStorage
+      const mercuryTransactions = updated.filter(t => t.bankVerified || t.bankId);
+      localStorage.setItem('mercury_transactions', JSON.stringify(mercuryTransactions));
+      localStorage.setItem('transactions', JSON.stringify(updated));
+      
+      return updated;
+    });
+    setNotification({ message: "Receipt removed.", type: 'success' });
   };
 
   const handleSendMessage = async (e?: React.FormEvent<HTMLFormElement>, overrideText?: string) => {
@@ -1224,7 +1288,19 @@ const App: React.FC = () => {
                               </button>
                             </div>
                           </td>
-                          <td className="px-6 py-5 text-right flex justify-end gap-2">
+                          <td className="px-6 py-5 text-right flex justify-end gap-1">
+                            <button 
+                              onClick={() => { setReceiptUploadTransaction(t); setShowModal('receipt'); }} 
+                              className={`p-2 transition-colors relative ${t.attachments && t.attachments.length > 0 ? 'text-emerald-400 hover:text-emerald-300' : 'hover:text-amber-400'}`}
+                              title={t.attachments && t.attachments.length > 0 ? `${t.attachments.length} receipt(s) attached` : 'Upload receipt'}
+                            >
+                              <Paperclip size={16}/>
+                              {t.attachments && t.attachments.length > 0 && (
+                                <span className="absolute -top-1 -right-1 w-4 h-4 bg-emerald-500 text-white text-[8px] font-bold rounded-full flex items-center justify-center">
+                                  {t.attachments.length}
+                                </span>
+                              )}
+                            </button>
                             <button onClick={() => { setEditingTransaction(t); setShowModal('transaction'); }} className="p-2 hover:text-indigo-400 transition-colors"><Edit3 size={16}/></button>
                             <button onClick={() => handleDeleteTransaction(t.id)} className="p-2 hover:text-rose-500 transition-colors"><Trash2 size={16}/></button>
                           </td>
@@ -1373,6 +1449,71 @@ const App: React.FC = () => {
                                     <p className="text-sm text-slate-400 italic">{t.context}</p>
                                   </div>
                                 )}
+
+                                {/* Attached Receipts */}
+                                <div className="bg-white/[0.02] border border-white/5 rounded-xl p-4 space-y-3">
+                                  <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-2">
+                                      <Paperclip size={14} className="text-amber-400" />
+                                      <span className="text-[10px] font-black text-amber-400 uppercase tracking-widest">Attached Receipts</span>
+                                    </div>
+                                    <button 
+                                      onClick={() => { setReceiptUploadTransaction(t); setShowModal('receipt'); }}
+                                      className="text-[10px] text-indigo-400 hover:text-indigo-300 font-bold flex items-center gap-1"
+                                    >
+                                      <Plus size={12} /> Add Receipt
+                                    </button>
+                                  </div>
+                                  {t.attachments && t.attachments.length > 0 ? (
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                      {t.attachments.map(att => (
+                                        <div key={att.id} className="flex items-center justify-between p-3 bg-white/[0.02] rounded-xl border border-white/5 group hover:border-indigo-500/30 transition-colors">
+                                          <div className="flex items-center gap-3">
+                                            <div className={`p-2 rounded-lg ${att.type.includes('image') ? 'bg-indigo-500/10' : 'bg-rose-500/10'}`}>
+                                              {att.type.includes('image') ? (
+                                                <ImageIcon size={16} className="text-indigo-400" />
+                                              ) : (
+                                                <FileText size={16} className="text-rose-400" />
+                                              )}
+                                            </div>
+                                            <div>
+                                              <p className="text-xs font-bold text-white truncate max-w-[150px]">{att.name}</p>
+                                              <p className="text-[10px] text-slate-500">{att.dateAdded}</p>
+                                            </div>
+                                          </div>
+                                          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                            <button 
+                                              onClick={() => {
+                                                setViewingAsset({
+                                                  id: att.id,
+                                                  name: att.name,
+                                                  type: att.type,
+                                                  url: att.url,
+                                                  category: 'Receipt',
+                                                  dateAdded: att.dateAdded,
+                                                  size: ''
+                                                });
+                                              }}
+                                              className="p-1.5 hover:bg-indigo-500/20 rounded-lg transition-colors"
+                                              title="View"
+                                            >
+                                              <Eye size={14} className="text-indigo-400" />
+                                            </button>
+                                            <button 
+                                              onClick={() => handleDeleteReceipt(t.id, att.id)}
+                                              className="p-1.5 hover:bg-rose-500/20 rounded-lg transition-colors"
+                                              title="Delete"
+                                            >
+                                              <Trash2 size={14} className="text-rose-400" />
+                                            </button>
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  ) : (
+                                    <p className="text-[11px] text-slate-500 italic">No receipts attached. Click "Add Receipt" to upload documentation.</p>
+                                  )}
+                                </div>
                               </div>
                             </td>
                           </tr>
@@ -2654,6 +2795,158 @@ const App: React.FC = () => {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Receipt Upload Modal */}
+      {showModal === 'receipt' && receiptUploadTransaction && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => { setShowModal(null); setReceiptUploadTransaction(null); setUploadPreview(null); }} />
+          <div className="bg-[#121216] border border-white/10 w-full max-w-md rounded-3xl p-8 relative z-10 shadow-2xl">
+            <button onClick={() => { setShowModal(null); setReceiptUploadTransaction(null); setUploadPreview(null); }} className="absolute top-6 right-6 text-slate-500 hover:text-white transition-colors"><X size={20} /></button>
+            
+            <div className="flex items-center gap-4 mb-6">
+              <div className="p-4 bg-amber-600 rounded-2xl text-white">
+                <Paperclip size={28} />
+              </div>
+              <div>
+                <h3 className="text-xl font-black text-white">Upload Receipt</h3>
+                <p className="text-xs text-slate-500">Attach documentation for {receiptUploadTransaction.vendor}</p>
+              </div>
+            </div>
+
+            {/* Transaction Info */}
+            <div className="bg-white/[0.02] border border-white/5 rounded-xl p-4 mb-6">
+              <div className="flex justify-between items-center">
+                <div>
+                  <p className="text-sm font-bold text-white">{receiptUploadTransaction.vendor}</p>
+                  <p className="text-[10px] text-slate-500">{receiptUploadTransaction.date} • {receiptUploadTransaction.category}</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-lg font-black text-indigo-400">${receiptUploadTransaction.amount.toLocaleString()}</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Existing Receipts */}
+            {receiptUploadTransaction.attachments && receiptUploadTransaction.attachments.length > 0 && (
+              <div className="mb-6">
+                <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3">Attached Receipts ({receiptUploadTransaction.attachments.length})</p>
+                <div className="space-y-2">
+                  {receiptUploadTransaction.attachments.map(att => (
+                    <div key={att.id} className="flex items-center justify-between p-3 bg-white/[0.02] rounded-xl border border-white/5">
+                      <div className="flex items-center gap-2">
+                        {att.type.includes('image') ? (
+                          <ImageIcon size={14} className="text-indigo-400" />
+                        ) : (
+                          <FileText size={14} className="text-rose-400" />
+                        )}
+                        <span className="text-xs text-white truncate max-w-[150px]">{att.name}</span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <button 
+                          onClick={() => {
+                            setViewingAsset({
+                              id: att.id,
+                              name: att.name,
+                              type: att.type,
+                              url: att.url,
+                              category: 'Receipt',
+                              dateAdded: att.dateAdded,
+                              size: ''
+                            });
+                          }}
+                          className="p-1.5 hover:bg-indigo-500/20 rounded transition-colors"
+                        >
+                          <Eye size={12} className="text-indigo-400" />
+                        </button>
+                        <button 
+                          onClick={() => handleDeleteReceipt(receiptUploadTransaction.id, att.id)}
+                          className="p-1.5 hover:bg-rose-500/20 rounded transition-colors"
+                        >
+                          <Trash2 size={12} className="text-rose-400" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Upload Area */}
+            <div 
+              className="border-2 border-dashed border-white/10 rounded-2xl p-8 text-center hover:border-amber-500/50 transition-all cursor-pointer group relative overflow-hidden mb-6"
+              onClick={() => document.getElementById('receiptInput')?.click()}
+            >
+              <input 
+                id="receiptInput"
+                type="file" 
+                className="hidden"
+                accept="image/*,.pdf"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) {
+                    if (file.type.startsWith('image/')) {
+                      const reader = new FileReader();
+                      reader.onload = () => setUploadPreview(reader.result as string);
+                      reader.readAsDataURL(file);
+                    } else {
+                      setUploadPreview('pdf');
+                    }
+                  }
+                }}
+              />
+              {uploadPreview ? (
+                <div className="relative">
+                  {uploadPreview === 'pdf' ? (
+                    <div className="p-4 bg-rose-500/10 rounded-2xl inline-block mb-3">
+                      <FileText size={32} className="text-rose-400" />
+                    </div>
+                  ) : (
+                    <img src={uploadPreview} alt="Preview" className="max-h-32 mx-auto rounded-xl mb-3" />
+                  )}
+                  <p className="text-sm text-emerald-400 font-bold flex items-center justify-center gap-2">
+                    <CheckCircle2 size={16} /> Ready to upload
+                  </p>
+                  <p className="text-[10px] text-slate-600 mt-1">Click to change file</p>
+                </div>
+              ) : (
+                <>
+                  <div className="p-4 bg-amber-500/10 rounded-2xl inline-block mb-4 group-hover:bg-amber-500/20 transition-all">
+                    <UploadCloud size={32} className="text-amber-400" />
+                  </div>
+                  <p className="text-sm text-slate-400 mb-1">Click to select receipt</p>
+                  <p className="text-[10px] text-slate-600">Images or PDF documents</p>
+                </>
+              )}
+            </div>
+
+            <div className="flex gap-3">
+              <button 
+                type="button" 
+                onClick={() => { setShowModal(null); setReceiptUploadTransaction(null); setUploadPreview(null); }}
+                className="flex-1 py-4 bg-white/5 hover:bg-white/10 text-slate-400 font-bold uppercase tracking-widest rounded-xl transition-all"
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={() => {
+                  const input = document.getElementById('receiptInput') as HTMLInputElement;
+                  const file = input?.files?.[0];
+                  if (file && receiptUploadTransaction) {
+                    handleReceiptUpload(receiptUploadTransaction.id, file);
+                  } else {
+                    setNotification({ message: 'Please select a file', type: 'alert' });
+                  }
+                }}
+                disabled={!uploadPreview}
+                className="flex-1 py-4 bg-amber-600 hover:bg-amber-500 disabled:bg-slate-700 disabled:cursor-not-allowed text-white font-black uppercase tracking-widest rounded-xl transition-all shadow-lg active:scale-95 flex items-center justify-center gap-2"
+              >
+                <Paperclip size={18} />
+                Attach Receipt
+              </button>
+            </div>
           </div>
         </div>
       )}
