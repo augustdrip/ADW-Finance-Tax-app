@@ -57,15 +57,21 @@ export const mercuryService = {
    * Fetches all accounts from Mercury
    */
   async fetchAccounts(apiKey: string): Promise<MercuryAccount[]> {
+    // Defensive: ensure apiKey is actually a string (prevents runtime "substring is not a function")
+    const apiKeyStr = typeof apiKey === 'string' ? apiKey : String((apiKey as any) ?? '');
+    if (!apiKeyStr || apiKeyStr === 'undefined' || apiKeyStr === 'null') {
+      throw new Error("Mercury API Key is required. Paste your token again.");
+    }
+
     // Debug: Log key info (masked for security)
-    console.log("[Mercury] API Key length:", apiKey?.length);
-    console.log("[Mercury] API Key starts with:", apiKey?.substring(0, 20) + "...");
+    console.log("[Mercury] API Key length:", apiKeyStr.length);
+    console.log("[Mercury] API Key starts with:", apiKeyStr.substring(0, 20) + "...");
     console.log("[Mercury] Calling:", `${MERCURY_API_BASE}/accounts`);
     
     const response = await fetch(`${MERCURY_API_BASE}/accounts`, {
       method: 'GET',
       headers: {
-        'Authorization': `Bearer ${apiKey}`,
+        'Authorization': `Bearer ${apiKeyStr}`,
         'Content-Type': 'application/json',
         'Accept': 'application/json'
       }
@@ -89,6 +95,11 @@ export const mercuryService = {
    * Uses date range to get complete history back to account creation
    */
   async fetchAccountTransactions(apiKey: string, accountId: string): Promise<MercuryTransaction[]> {
+    const apiKeyStr = typeof apiKey === 'string' ? apiKey : String((apiKey as any) ?? '');
+    if (!apiKeyStr || apiKeyStr === 'undefined' || apiKeyStr === 'null') {
+      throw new Error("Mercury API Key is required. Paste your token again.");
+    }
+
     const allTransactions: MercuryTransaction[] = [];
     let offset = 0;
     const limit = 500; // Max per request
@@ -109,7 +120,7 @@ export const mercuryService = {
       const response = await fetch(url, {
         method: 'GET',
         headers: {
-          'Authorization': `Bearer ${apiKey}`,
+          'Authorization': `Bearer ${apiKeyStr}`,
           'Content-Type': 'application/json',
           'Accept': 'application/json'
         }
