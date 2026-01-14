@@ -50,14 +50,23 @@ import {
   Waves,
   Link as LinkIcon,
   Globe,
-  Lock
+  Lock,
+  Brain,
+  Lightbulb,
+  DollarSign,
+  Rocket,
+  TrendingDown,
+  Activity,
+  Eye,
+  ExternalLink,
+  ZoomIn
 } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { jsPDF } from 'jspdf';
 import { Transaction, DashboardStats, ChatMessage, ClientAgreement, Invoice, Attachment, TaxFormSummary, CompanyAsset } from './types';
-import { analyzeTransaction, streamStrategyChat, enhanceBusinessContext } from './services/geminiService';
+import { analyzeTransaction, streamStrategyChat, enhanceBusinessContext, generateMonthlySummary, MonthlySummary } from './services/geminiService';
 import { db } from './services/supabaseService';
-import { mercuryService } from './services/mercuryService';
+import { mercuryService, hasMercuryEnvKey } from './services/mercuryService';
 
 const COMPANY_INFO = {
   name: "Agency Dev Works",
@@ -100,6 +109,8 @@ const App: React.FC = () => {
   const [isEnhancing, setIsEnhancing] = useState(false);
   const [isBulkAnalyzing, setIsBulkAnalyzing] = useState(false);
   const [showModal, setShowModal] = useState<'transaction' | 'invoice' | 'agreement' | 'asset' | 'mercury' | null>(null);
+  const [viewingAsset, setViewingAsset] = useState<CompanyAsset | null>(null); // For image lightbox
+  const [uploadPreview, setUploadPreview] = useState<string | null>(null); // Preview for asset upload
   const [mercuryApiKey, setMercuryApiKey] = useState<string>(localStorage.getItem('mercury_key') || '');
   const [lastSyncTime, setLastSyncTime] = useState<string>(localStorage.getItem('mercury_sync') || 'Never');
   
@@ -109,7 +120,7 @@ const App: React.FC = () => {
   const [tempAttachments, setTempAttachments] = useState<Attachment[]>([]);
   const [notification, setNotification] = useState<{message: string, type: 'success' | 'alert'} | null>(null);
   
-  const [currentMonth, setCurrentMonth] = useState<string>(new Date().toISOString().slice(0, 7));
+  const [currentMonth, setCurrentMonth] = useState<string>('all'); // Default to showing all transactions
   const [expandedAnalysisId, setExpandedAnalysisId] = useState<string | null>(null);
   const [modalContext, setModalContext] = useState('');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -118,6 +129,14 @@ const App: React.FC = () => {
     { id: '1', role: 'assistant', content: 'Agency Dev Works Strategist online. Knowledge base: Internal Revenue Code 2024. Bank connection: Mercury Protocol established. How shall we optimize your tax posture today?', timestamp: Date.now() }
   ]);
   const [isTyping, setIsTyping] = useState(false);
+  
+  // AI Monthly Summary State
+  const [monthlySummary, setMonthlySummary] = useState<MonthlySummary | null>(() => {
+    const saved = localStorage.getItem('monthly_summary');
+    return saved ? JSON.parse(saved) : null;
+  });
+  const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
+  const [showFullSummary, setShowFullSummary] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const assetInputRef = useRef<HTMLInputElement>(null);
@@ -126,23 +145,52 @@ const App: React.FC = () => {
   const loadData = async () => {
     setIsSyncing(true);
     try {
+      // Load from localStorage first (most reliable)
+      const savedMercuryTransactions = localStorage.getItem('mercury_transactions');
+      const savedAgreements = localStorage.getItem('agreements');
+      const savedInvoices = localStorage.getItem('invoices');
+      const savedAssets = localStorage.getItem('assets');
+      
+      const mercuryTransactions = savedMercuryTransactions ? JSON.parse(savedMercuryTransactions) : [];
+      const localAgreements = savedAgreements ? JSON.parse(savedAgreements) : [];
+      const localInvoices = savedInvoices ? JSON.parse(savedInvoices) : [];
+      const localAssets = savedAssets ? JSON.parse(savedAssets) : [];
+      
+      // Try to fetch from Supabase (may fail if tables don't exist)
       const [tData, iData, aData, asData] = await Promise.all([
-        db.transactions.fetch(),
-        db.invoices.fetch(),
-        db.agreements.fetch(),
-        db.assets.fetch()
+        db.transactions.fetch().catch(() => []),
+        db.invoices.fetch().catch(() => []),
+        db.agreements.fetch().catch(() => []),
+        db.assets.fetch().catch(() => [])
       ]);
       
-      setTransactions(tData?.length ? tData : MOCK_DATA.transactions as any);
-      setInvoices(iData?.length ? iData : MOCK_DATA.invoices as any);
-      setAgreements(aData?.length ? aData : MOCK_DATA.agreements as any);
-      setAssets(asData?.length ? asData : MOCK_DATA.assets as any);
+      // Combine Supabase data with localStorage data (localStorage takes priority)
+      const supabaseTransactions = tData?.length ? tData : MOCK_DATA.transactions as any;
+      
+      // Merge: localStorage Mercury transactions + Supabase/mock data (avoiding duplicates)
+      const existingIds = new Set(mercuryTransactions.map((t: any) => t.id));
+      const uniqueSupabase = supabaseTransactions.filter((t: any) => !existingIds.has(t.id));
+      const allTransactions = [...mercuryTransactions, ...uniqueSupabase];
+      
+      setTransactions(allTransactions);
+      
+      // Use localStorage data if available, otherwise Supabase, otherwise mock
+      setAgreements(localAgreements.length ? localAgreements : (aData?.length ? aData : MOCK_DATA.agreements as any));
+      setInvoices(localInvoices.length ? localInvoices : (iData?.length ? iData : MOCK_DATA.invoices as any));
+      setAssets(localAssets.length ? localAssets : (asData?.length ? asData : MOCK_DATA.assets as any));
     } catch (e) {
       console.error("Load Error:", e);
-      setTransactions(MOCK_DATA.transactions as any);
-      setInvoices(MOCK_DATA.invoices as any);
-      setAgreements(MOCK_DATA.agreements as any);
-      setAssets(MOCK_DATA.assets as any);
+      // Fallback to localStorage then mock data
+      const savedMercuryTransactions = localStorage.getItem('mercury_transactions');
+      const savedAgreements = localStorage.getItem('agreements');
+      const savedInvoices = localStorage.getItem('invoices');
+      const savedAssets = localStorage.getItem('assets');
+      
+      const mercuryTransactions = savedMercuryTransactions ? JSON.parse(savedMercuryTransactions) : [];
+      setTransactions(mercuryTransactions.length ? mercuryTransactions : MOCK_DATA.transactions as any);
+      setAgreements(savedAgreements ? JSON.parse(savedAgreements) : MOCK_DATA.agreements as any);
+      setInvoices(savedInvoices ? JSON.parse(savedInvoices) : MOCK_DATA.invoices as any);
+      setAssets(savedAssets ? JSON.parse(savedAssets) : MOCK_DATA.assets as any);
     } finally {
       setIsSyncing(false);
     }
@@ -161,8 +209,21 @@ const App: React.FC = () => {
     }
   }, [notification]);
 
+  // ESC key handler for closing lightbox
+  useEffect(() => {
+    const handleEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setViewingAsset(null);
+        setShowModal(null);
+      }
+    };
+    window.addEventListener('keydown', handleEsc);
+    return () => window.removeEventListener('keydown', handleEsc);
+  }, []);
+
   const filteredTransactions = useMemo(() => {
-    if (activeTab === 'transactions' && currentMonth) {
+    // If currentMonth is empty or 'all', show all transactions
+    if (activeTab === 'transactions' && currentMonth && currentMonth !== 'all') {
       return transactions.filter(t => t.date.startsWith(currentMonth));
     }
     return transactions;
@@ -214,7 +275,9 @@ const App: React.FC = () => {
   }, [transactions, invoices]);
 
   const handleMercurySync = async () => {
-    if (!mercuryApiKey) {
+    // Check for API key: env variable first, then localStorage
+    const hasEnvKey = hasMercuryEnvKey();
+    if (!hasEnvKey && !mercuryApiKey) {
       setShowModal('mercury');
       return;
     }
@@ -223,34 +286,32 @@ const App: React.FC = () => {
     setNotification({ message: "Connecting to Mercury Protocol...", type: 'success' });
 
     try {
-      // Call real Mercury API
-      const mercuryTransactions = await mercuryService.fetchTransactions(mercuryApiKey);
+      // Call real Mercury API (uses env key if available, otherwise localStorage key)
+      const mercuryTransactions = await mercuryService.fetchTransactions(mercuryApiKey || undefined);
       
-      // Add only unique transactions (check by bankId to avoid duplicates)
+      // Process all Mercury transactions
+      const processedTransactions = mercuryTransactions.map(t => ({
+        ...t,
+        bankId: t.id,
+        id: t.id.startsWith('merc_') ? t.id : `merc_${t.id}`,
+        bankVerified: true
+      }));
+      
+      // Save ALL Mercury transactions to localStorage for persistence
+      localStorage.setItem('mercury_transactions', JSON.stringify(processedTransactions));
+      
+      // Update state with Mercury transactions + existing non-Mercury transactions
       setTransactions(prev => {
-        const existingBankIds = new Set(prev.filter(p => p.bankId).map(p => p.bankId));
-        const existingIds = new Set(prev.map(p => p.id));
-        
-        const newTransactions = mercuryTransactions
-          .filter(m => !existingBankIds.has(m.id) && !existingIds.has(m.id))
-          .map(t => ({
-            ...t,
-            bankId: t.id, // Store original Mercury ID
-            id: `merc_${t.id}`, // Create unique app ID
-            bankVerified: true
-          }));
-        
-        // Save new transactions to Supabase
-        newTransactions.forEach(t => db.transactions.upsert(t));
-        
-        return [...newTransactions, ...prev];
+        const nonMercuryTransactions = prev.filter(p => !p.bankVerified && !p.bankId);
+        return [...processedTransactions, ...nonMercuryTransactions];
       });
 
       // Also fetch the real bank balance
       try {
-        const balance = await mercuryService.fetchTotalBalance(mercuryApiKey);
-        setBankBalance(balance / 100); // Convert from cents to dollars
-        localStorage.setItem('mercury_balance', String(balance / 100));
+        const balance = await mercuryService.fetchTotalBalance(mercuryApiKey || undefined);
+        // Mercury returns balance in dollars (not cents)
+        setBankBalance(balance);
+        localStorage.setItem('mercury_balance', String(balance));
       } catch (balanceError) {
         console.warn("Could not fetch balance:", balanceError);
       }
@@ -291,14 +352,30 @@ const App: React.FC = () => {
   };
 
   const handleAnalyze = async (transaction: Transaction) => {
+    setNotification({ message: `Analyzing ${transaction.vendor}...`, type: 'success' });
     try {
       const analysis = await analyzeTransaction(transaction);
       const updated = { ...transaction, analysis };
-      await db.transactions.upsert(updated);
-      setTransactions(prev => prev.map(t => t.id === transaction.id ? updated : t));
+      
+      // Update state
+      setTransactions(prev => {
+        const newTransactions = prev.map(t => t.id === transaction.id ? updated : t);
+        
+        // Save Mercury transactions (those with bankVerified) to localStorage
+        const mercuryTransactions = newTransactions.filter(t => t.bankVerified);
+        localStorage.setItem('mercury_transactions', JSON.stringify(mercuryTransactions));
+        
+        return newTransactions;
+      });
+      
+      // Also try to save to Supabase
+      db.transactions.upsert(updated).catch(e => console.warn("Supabase save failed:", e));
+      
+      setNotification({ message: `Analysis complete for ${transaction.vendor}`, type: 'success' });
       return updated;
-    } catch (error) {
-      console.error(error);
+    } catch (error: any) {
+      console.error("Analysis error:", error);
+      setNotification({ message: `Analysis failed: ${error.message || 'Unknown error'}`, type: 'alert' });
       throw error;
     }
   };
@@ -322,6 +399,29 @@ const App: React.FC = () => {
     }
   };
 
+  const handleGenerateSummary = async () => {
+    setIsGeneratingSummary(true);
+    setNotification({ message: "AI Strategist analyzing your financials...", type: 'success' });
+    
+    try {
+      const summary = await generateMonthlySummary(
+        transactions.map(t => ({ vendor: t.vendor, amount: t.amount, category: t.category, date: t.date })),
+        invoices.map(i => ({ amount: i.amount, status: i.status, clientName: i.clientName })),
+        bankBalance,
+        agreements.map(a => ({ clientName: a.clientName, value: a.value, status: a.status }))
+      );
+      
+      setMonthlySummary(summary);
+      localStorage.setItem('monthly_summary', JSON.stringify(summary));
+      setNotification({ message: "Strategic summary generated successfully!", type: 'success' });
+    } catch (error: any) {
+      console.error("Summary generation error:", error);
+      setNotification({ message: `Summary failed: ${error.message || 'Unknown error'}`, type: 'alert' });
+    } finally {
+      setIsGeneratingSummary(false);
+    }
+  };
+
   const toggleSelectAll = () => {
     if (selectedIds.size === filteredTransactions.length) setSelectedIds(new Set());
     else setSelectedIds(new Set(filteredTransactions.map(t => t.id)));
@@ -337,10 +437,25 @@ const App: React.FC = () => {
   const handleDeleteTransaction = async (id: string) => {
     if (!confirm('Permanently expunge this record?')) return;
     try {
-      await db.transactions.delete(id);
-      setTransactions(prev => prev.filter(t => t.id !== id));
-      setNotification({ message: "Record expunged.", type: 'success' });
-    } catch (e) { console.error(e); }
+      // Update state
+      setTransactions(prev => {
+        const updated = prev.filter(t => t.id !== id);
+        
+        // Update localStorage - remove from mercury_transactions
+        const mercuryTransactions = updated.filter(t => t.bankVerified || t.bankId);
+        localStorage.setItem('mercury_transactions', JSON.stringify(mercuryTransactions));
+        
+        return updated;
+      });
+      
+      // Also try to delete from Supabase (may fail if not connected)
+      db.transactions.delete(id).catch(e => console.warn("Supabase delete failed:", e));
+      
+      setNotification({ message: "Record permanently expunged.", type: 'success' });
+    } catch (e) { 
+      console.error(e);
+      setNotification({ message: "Failed to delete record.", type: 'alert' });
+    }
   };
 
   const handleSendMessage = async (e?: React.FormEvent<HTMLFormElement>, overrideText?: string) => {
@@ -681,6 +796,206 @@ const App: React.FC = () => {
                   </div>
                 </div>
               </div>
+
+              {/* AI Monthly Strategic Summary */}
+              <div className="bg-gradient-to-br from-[#121216] via-[#121216] to-indigo-950/20 border border-indigo-500/20 rounded-[2.5rem] p-8 shadow-2xl relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-96 h-96 bg-indigo-500/5 blur-3xl -mr-48 -mt-48"></div>
+                <div className="absolute bottom-0 left-0 w-64 h-64 bg-purple-500/5 blur-3xl -ml-32 -mb-32"></div>
+                
+                <div className="relative z-10">
+                  <div className="flex justify-between items-start mb-8">
+                    <div className="flex items-center gap-4">
+                      <div className="p-4 bg-gradient-to-br from-indigo-600 to-purple-600 rounded-2xl text-white shadow-xl shadow-indigo-600/20">
+                        <Brain size={28} />
+                      </div>
+                      <div>
+                        <h3 className="font-black text-white text-lg uppercase tracking-wide flex items-center gap-2">
+                          AI Strategic Summary
+                          <span className="text-[9px] font-black px-2 py-1 rounded-full bg-indigo-500/20 text-indigo-400 uppercase tracking-widest">
+                            {new Date().toLocaleString('default', { month: 'short' })} {new Date().getFullYear()}
+                          </span>
+                        </h3>
+                        <p className="text-[10px] text-slate-500 mt-1">
+                          {monthlySummary ? `Generated: ${new Date(monthlySummary.generatedAt).toLocaleDateString()}` : 'Analyze expenses, find savings, discover ventures'}
+                        </p>
+                      </div>
+                    </div>
+                    <button 
+                      onClick={handleGenerateSummary}
+                      disabled={isGeneratingSummary}
+                      className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white px-6 py-3 rounded-xl text-xs font-black uppercase flex items-center gap-2 transition-all shadow-lg active:scale-95"
+                    >
+                      {isGeneratingSummary ? (
+                        <>
+                          <Loader2 size={16} className="animate-spin" /> Analyzing...
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles size={16} /> {monthlySummary ? 'Refresh Analysis' : 'Generate Summary'}
+                        </>
+                      )}
+                    </button>
+                  </div>
+
+                  {monthlySummary ? (
+                    <div className="space-y-8">
+                      {/* Executive Summary */}
+                      <div className="bg-white/[0.02] border border-white/5 rounded-2xl p-6">
+                        <div className="flex items-start gap-4">
+                          <div className="p-2 bg-emerald-500/10 rounded-xl shrink-0">
+                            <Activity size={20} className="text-emerald-400" />
+                          </div>
+                          <div className="flex-1">
+                            <div className="flex items-center justify-between mb-2">
+                              <span className="text-[10px] font-black text-emerald-400 uppercase tracking-widest">Executive Overview</span>
+                              <div className="flex items-center gap-2">
+                                <span className="text-[9px] text-slate-500">Health Score:</span>
+                                <span className={`text-sm font-black ${monthlySummary.overallHealthScore >= 70 ? 'text-emerald-400' : monthlySummary.overallHealthScore >= 50 ? 'text-amber-400' : 'text-rose-400'}`}>
+                                  {monthlySummary.overallHealthScore}/100
+                                </span>
+                              </div>
+                            </div>
+                            <p className="text-sm text-slate-300 leading-relaxed">{monthlySummary.executiveSummary}</p>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Key Metrics Row */}
+                      <div className="grid grid-cols-3 gap-4">
+                        <div className="bg-white/[0.02] border border-white/5 rounded-2xl p-5 text-center">
+                          <div className="text-2xl font-black text-emerald-400">${monthlySummary.totalRevenue.toLocaleString()}</div>
+                          <div className="text-[9px] text-slate-500 font-bold uppercase tracking-widest mt-1">Revenue</div>
+                        </div>
+                        <div className="bg-white/[0.02] border border-white/5 rounded-2xl p-5 text-center">
+                          <div className="text-2xl font-black text-rose-400">${monthlySummary.totalExpenses.toLocaleString()}</div>
+                          <div className="text-[9px] text-slate-500 font-bold uppercase tracking-widest mt-1">Expenses</div>
+                        </div>
+                        <div className="bg-white/[0.02] border border-white/5 rounded-2xl p-5 text-center">
+                          <div className={`text-2xl font-black ${monthlySummary.netCashflow >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                            {monthlySummary.netCashflow >= 0 ? '+' : ''}${monthlySummary.netCashflow.toLocaleString()}
+                          </div>
+                          <div className="text-[9px] text-slate-500 font-bold uppercase tracking-widest mt-1">Net Cashflow</div>
+                        </div>
+                      </div>
+
+                      {/* Savings & Ventures Grid */}
+                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                        {/* Money Saving Opportunities */}
+                        <div className="bg-white/[0.02] border border-emerald-500/20 rounded-2xl p-6 space-y-4">
+                          <div className="flex items-center gap-2">
+                            <div className="p-2 bg-emerald-500/10 rounded-lg">
+                              <DollarSign size={16} className="text-emerald-400" />
+                            </div>
+                            <span className="text-[10px] font-black text-emerald-400 uppercase tracking-widest">Savings Opportunities</span>
+                          </div>
+                          <div className="space-y-3">
+                            {monthlySummary.savingsOpportunities.slice(0, 3).map((opp, idx) => (
+                              <div key={idx} className="p-4 bg-white/[0.02] rounded-xl border border-white/5 hover:border-emerald-500/20 transition-all">
+                                <div className="flex items-start justify-between mb-2">
+                                  <span className="text-xs font-bold text-white">{opp.title}</span>
+                                  <span className={`text-[9px] font-black px-2 py-0.5 rounded ${opp.priority === 'High' ? 'bg-rose-500/10 text-rose-400' : opp.priority === 'Medium' ? 'bg-amber-500/10 text-amber-400' : 'bg-slate-500/10 text-slate-400'}`}>
+                                    {opp.priority}
+                                  </span>
+                                </div>
+                                <p className="text-[11px] text-slate-400 mb-2">{opp.action}</p>
+                                <div className="text-sm font-black text-emerald-400">
+                                  Save ${opp.potentialSavings.toLocaleString()}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* New Venture Opportunities */}
+                        <div className="bg-white/[0.02] border border-purple-500/20 rounded-2xl p-6 space-y-4">
+                          <div className="flex items-center gap-2">
+                            <div className="p-2 bg-purple-500/10 rounded-lg">
+                              <Rocket size={16} className="text-purple-400" />
+                            </div>
+                            <span className="text-[10px] font-black text-purple-400 uppercase tracking-widest">Revenue Ventures</span>
+                          </div>
+                          <div className="space-y-3">
+                            {monthlySummary.ventureOpportunities.slice(0, 3).map((venture, idx) => (
+                              <div key={idx} className="p-4 bg-white/[0.02] rounded-xl border border-white/5 hover:border-purple-500/20 transition-all">
+                                <div className="flex items-start justify-between mb-2">
+                                  <span className="text-xs font-bold text-white">{venture.idea}</span>
+                                  <span className="text-[9px] font-black px-2 py-0.5 rounded bg-purple-500/10 text-purple-400">
+                                    {venture.timeToImplement}
+                                  </span>
+                                </div>
+                                <p className="text-[11px] text-slate-400 mb-2">{venture.reasoning}</p>
+                                <div className="text-sm font-black text-purple-400">{venture.potentialRevenue}</div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Action Items & Risk Alerts */}
+                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                        {/* Action Items */}
+                        <div className="bg-white/[0.02] border border-white/5 rounded-2xl p-6 space-y-4">
+                          <div className="flex items-center gap-2">
+                            <div className="p-2 bg-indigo-500/10 rounded-lg">
+                              <Lightbulb size={16} className="text-indigo-400" />
+                            </div>
+                            <span className="text-[10px] font-black text-indigo-400 uppercase tracking-widest">Action Items</span>
+                          </div>
+                          <div className="space-y-2">
+                            {monthlySummary.actionItems.slice(0, 4).map((item, idx) => (
+                              <div key={idx} className="flex items-start gap-3 p-3 bg-white/[0.02] rounded-xl">
+                                <span className="text-[10px] font-black text-indigo-400 mt-0.5">{idx + 1}.</span>
+                                <span className="text-[11px] text-slate-300">{item}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Risk Alerts */}
+                        {monthlySummary.riskAlerts && monthlySummary.riskAlerts.length > 0 && (
+                          <div className="bg-white/[0.02] border border-rose-500/20 rounded-2xl p-6 space-y-4">
+                            <div className="flex items-center gap-2">
+                              <div className="p-2 bg-rose-500/10 rounded-lg">
+                                <AlertCircle size={16} className="text-rose-400" />
+                              </div>
+                              <span className="text-[10px] font-black text-rose-400 uppercase tracking-widest">Risk Alerts</span>
+                            </div>
+                            <div className="space-y-2">
+                              {monthlySummary.riskAlerts.slice(0, 3).map((alert, idx) => (
+                                <div key={idx} className="flex items-start gap-3 p-3 bg-rose-500/5 rounded-xl border border-rose-500/10">
+                                  <AlertCircle size={14} className="text-rose-400 mt-0.5 shrink-0" />
+                                  <span className="text-[11px] text-rose-300">{alert}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-center py-16">
+                      <div className="p-6 bg-indigo-500/10 rounded-3xl inline-block mb-6">
+                        <Brain size={48} className="text-indigo-400 animate-pulse" />
+                      </div>
+                      <h4 className="text-lg font-black text-white mb-2">AI Strategist Ready</h4>
+                      <p className="text-sm text-slate-500 max-w-md mx-auto mb-6">
+                        Click "Generate Summary" to receive a comprehensive analysis of your expenses, discover money-saving opportunities, and explore new revenue ventures.
+                      </p>
+                      <div className="flex justify-center gap-4">
+                        <div className="flex items-center gap-2 text-[10px] text-slate-500">
+                          <DollarSign size={14} className="text-emerald-400" /> Cost Reduction
+                        </div>
+                        <div className="flex items-center gap-2 text-[10px] text-slate-500">
+                          <Rocket size={14} className="text-purple-400" /> New Ventures
+                        </div>
+                        <div className="flex items-center gap-2 text-[10px] text-slate-500">
+                          <TrendingUp size={14} className="text-indigo-400" /> Growth Insights
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
           )}
 
@@ -714,6 +1029,35 @@ const App: React.FC = () => {
                 </div>
               </div>
 
+              {/* Month Filter */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  <div className="flex items-center gap-2">
+                    <Calendar size={16} className="text-slate-500" />
+                    <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Filter by Month:</span>
+                  </div>
+                  <select
+                    value={currentMonth}
+                    onChange={(e) => setCurrentMonth(e.target.value)}
+                    className="bg-[#121216] border border-white/10 rounded-xl py-2 px-4 text-sm text-white focus:border-indigo-500 outline-none transition-all"
+                  >
+                    <option value="all">📊 All Time ({transactions.length} records)</option>
+                    <option value={new Date().toISOString().slice(0, 7)}>📅 This Month</option>
+                    {/* Generate last 12 months */}
+                    {Array.from({ length: 12 }, (_, i) => {
+                      const date = new Date();
+                      date.setMonth(date.getMonth() - i);
+                      const value = date.toISOString().slice(0, 7);
+                      const label = date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+                      return <option key={value} value={value}>{label}</option>;
+                    })}
+                  </select>
+                </div>
+                <div className="text-[10px] text-slate-500">
+                  Showing <span className="text-indigo-400 font-bold">{filteredTransactions.length}</span> of <span className="font-bold">{transactions.length}</span> transactions
+                </div>
+              </div>
+
               <div className="bg-[#121216] border border-white/5 rounded-2xl overflow-hidden shadow-2xl">
                 <table className="w-full text-left">
                   <thead>
@@ -730,7 +1074,7 @@ const App: React.FC = () => {
                   <tbody className="divide-y divide-white/5">
                     {filteredTransactions.map(t => (
                       <React.Fragment key={t.id}>
-                        <tr className={`hover:bg-white/[0.02] transition-colors ${selectedIds.has(t.id) ? 'bg-indigo-500/5' : ''}`}>
+                        <tr className={`hover:bg-white/[0.02] transition-colors ${selectedIds.has(t.id) ? 'bg-indigo-500/5' : ''} ${expandedAnalysisId === t.id ? 'bg-indigo-500/5' : ''}`}>
                           <td className="px-6 py-5"><button onClick={() => toggleSelect(t.id)}>{selectedIds.has(t.id) ? <CheckSquare size={16} className="text-indigo-500" /> : <Square size={16} />}</button></td>
                           <td className="px-2 py-5 text-[11px] font-mono">{t.date}</td>
                           <td className="px-6 py-5 font-bold text-white">{t.vendor}</td>
@@ -746,19 +1090,177 @@ const App: React.FC = () => {
                              )}
                           </td>
                           <td className="px-6 py-5 text-center">
-                            {t.analysis ? (
-                               <button onClick={() => setExpandedAnalysisId(expandedAnalysisId === t.id ? null : t.id)} className="text-[10px] text-emerald-500 font-bold bg-emerald-500/10 px-2 py-1 rounded hover:bg-emerald-500/20 transition-all flex items-center gap-1.5 mx-auto">
-                                 <ShieldCheck size={12} /> IRC VERIFIED
-                               </button>
-                            ) : (
-                               <button onClick={() => handleAnalyze(t)} className="text-[10px] text-indigo-400 font-bold bg-indigo-400/10 px-2 py-1 rounded hover:bg-indigo-400/20 transition-all">ANALYZE</button>
-                            )}
+                            <div className="flex items-center justify-center gap-2">
+                              {t.analysis && (
+                                <button 
+                                  onClick={() => setExpandedAnalysisId(expandedAnalysisId === t.id ? null : t.id)} 
+                                  className="text-[10px] text-emerald-500 font-bold bg-emerald-500/10 px-2 py-1 rounded hover:bg-emerald-500/20 transition-all flex items-center gap-1.5"
+                                >
+                                  <ShieldCheck size={12} /> IRC VERIFIED
+                                  <ChevronDown size={12} className={`transition-transform ${expandedAnalysisId === t.id ? 'rotate-180' : ''}`} />
+                                </button>
+                              )}
+                              <button 
+                                onClick={() => handleAnalyze(t)} 
+                                className="text-[10px] text-indigo-400 font-bold bg-indigo-400/10 px-2 py-1 rounded hover:bg-indigo-400/20 transition-all flex items-center gap-1"
+                              >
+                                <Sparkles size={12} /> {t.analysis ? 'RE-ANALYZE' : 'ANALYZE'}
+                              </button>
+                            </div>
                           </td>
                           <td className="px-6 py-5 text-right flex justify-end gap-2">
                             <button onClick={() => { setEditingTransaction(t); setShowModal('transaction'); }} className="p-2 hover:text-indigo-400 transition-colors"><Edit3 size={16}/></button>
                             <button onClick={() => handleDeleteTransaction(t.id)} className="p-2 hover:text-rose-500 transition-colors"><Trash2 size={16}/></button>
                           </td>
                         </tr>
+                        {/* Expandable IRC Compliance Dropdown */}
+                        {expandedAnalysisId === t.id && t.analysis && (
+                          <tr className="bg-indigo-500/5">
+                            <td colSpan={7} className="px-6 py-6">
+                              <div className="bg-[#0D0D10] border border-indigo-500/20 rounded-2xl p-6 space-y-6 animate-in slide-in-from-top-2 duration-300">
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center gap-3">
+                                    <div className="p-2 bg-emerald-500/10 rounded-xl">
+                                      <ShieldCheck size={20} className="text-emerald-500" />
+                                    </div>
+                                    <div>
+                                      <h4 className="text-sm font-black text-white uppercase tracking-wide">IRC Compliance Analysis</h4>
+                                      <p className="text-[10px] text-slate-500">AI-verified tax deduction assessment for {t.vendor}</p>
+                                    </div>
+                                  </div>
+                                  <div className="text-right">
+                                    <div className="text-lg font-black text-emerald-400">${t.analysis.deductibleAmount.toLocaleString()}</div>
+                                    <div className="text-[9px] text-slate-500 uppercase">Deductible Amount</div>
+                                  </div>
+                                </div>
+
+                                {/* Compliance Steps */}
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                  {/* IRC Section */}
+                                  <div className="bg-white/[0.02] border border-white/5 rounded-xl p-4 space-y-2">
+                                    <div className="flex items-center gap-2">
+                                      <Gavel size={14} className="text-indigo-400" />
+                                      <span className="text-[10px] font-black text-indigo-400 uppercase tracking-widest">IRC Section</span>
+                                    </div>
+                                    <div className="text-sm font-bold text-white">{t.analysis.citedSections?.join(', ') || t.analysis.legalBasis}</div>
+                                  </div>
+
+                                  {/* Deduction Potential */}
+                                  <div className="bg-white/[0.02] border border-white/5 rounded-xl p-4 space-y-2">
+                                    <div className="flex items-center gap-2">
+                                      <Target size={14} className="text-amber-400" />
+                                      <span className="text-[10px] font-black text-amber-400 uppercase tracking-widest">Deduction Potential</span>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                      <div className="flex-1 h-2 bg-white/5 rounded-full overflow-hidden">
+                                        <div 
+                                          className={`h-full rounded-full ${
+                                            t.analysis.deductionPotential === 'High' ? 'bg-emerald-500' : 
+                                            t.analysis.deductionPotential === 'Medium' ? 'bg-amber-500' : 'bg-rose-500'
+                                          }`}
+                                          style={{ width: t.analysis.deductionPotential === 'High' ? '90%' : t.analysis.deductionPotential === 'Medium' ? '70%' : t.analysis.deductionPotential === 'Low' ? '40%' : '20%' }}
+                                        />
+                                      </div>
+                                      <span className={`text-sm font-black ${
+                                        t.analysis.deductionPotential === 'High' ? 'text-emerald-400' : 
+                                        t.analysis.deductionPotential === 'Medium' ? 'text-amber-400' : 'text-rose-400'
+                                      }`}>{t.analysis.deductionPotential}</span>
+                                    </div>
+                                  </div>
+
+                                  {/* Risk Assessment */}
+                                  <div className="bg-white/[0.02] border border-white/5 rounded-xl p-4 space-y-2">
+                                    <div className="flex items-center gap-2">
+                                      <ShieldAlert size={14} className="text-rose-400" />
+                                      <span className="text-[10px] font-black text-rose-400 uppercase tracking-widest">Audit Risk</span>
+                                    </div>
+                                    <span className={`text-sm font-bold px-3 py-1 rounded-lg inline-block ${
+                                      t.analysis.riskLevel === 'Safe' ? 'bg-emerald-500/10 text-emerald-500' :
+                                      t.analysis.riskLevel === 'Moderate' ? 'bg-amber-500/10 text-amber-500' :
+                                      'bg-rose-500/10 text-rose-500'
+                                    }`}>{t.analysis.riskLevel}</span>
+                                  </div>
+
+                                  {/* Category */}
+                                  <div className="bg-white/[0.02] border border-white/5 rounded-xl p-4 space-y-2">
+                                    <div className="flex items-center gap-2">
+                                      <FolderOpen size={14} className="text-cyan-400" />
+                                      <span className="text-[10px] font-black text-cyan-400 uppercase tracking-widest">Category</span>
+                                    </div>
+                                    <div className="text-sm font-bold text-white">{t.category}</div>
+                                  </div>
+                                </div>
+
+                                {/* Strategy */}
+                                <div className="bg-white/[0.02] border border-white/5 rounded-xl p-4 space-y-2">
+                                  <div className="flex items-center gap-2">
+                                    <BookOpen size={14} className="text-purple-400" />
+                                    <span className="text-[10px] font-black text-purple-400 uppercase tracking-widest">Tax Strategy</span>
+                                  </div>
+                                  <p className="text-sm text-slate-300 leading-relaxed">{t.analysis.strategy}</p>
+                                </div>
+
+                                {/* Action Steps */}
+                                {t.analysis.actionSteps && t.analysis.actionSteps.length > 0 && (
+                                  <div className="bg-white/[0.02] border border-white/5 rounded-xl p-4 space-y-3">
+                                    <div className="flex items-center gap-2">
+                                      <CheckCircle2 size={14} className="text-emerald-400" />
+                                      <span className="text-[10px] font-black text-emerald-400 uppercase tracking-widest">Action Steps</span>
+                                    </div>
+                                    <div className="space-y-2">
+                                      {t.analysis.actionSteps.map((step, idx) => (
+                                        <div key={idx} className="flex items-start gap-2 p-2 rounded-lg bg-white/[0.02]">
+                                          <span className="text-[10px] font-black text-indigo-400 mt-0.5">{idx + 1}.</span>
+                                          <span className="text-[11px] text-slate-300">{step}</span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+
+                                {/* Compliance Checklist */}
+                                <div className="bg-white/[0.02] border border-white/5 rounded-xl p-4 space-y-3">
+                                  <div className="flex items-center gap-2">
+                                    <CheckCircle2 size={14} className="text-emerald-400" />
+                                    <span className="text-[10px] font-black text-emerald-400 uppercase tracking-widest">Compliance Checklist</span>
+                                  </div>
+                                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                                    {[
+                                      { label: 'Business Purpose Documented', check: !!t.context },
+                                      { label: 'Receipt/Invoice Available', check: t.attachments && t.attachments.length > 0 },
+                                      { label: 'Bank Verification', check: t.bankVerified },
+                                      { label: 'IRC Section Mapped', check: t.analysis.citedSections && t.analysis.citedSections.length > 0 },
+                                      { label: 'Deduction Calculated', check: t.analysis.deductibleAmount > 0 },
+                                      { label: 'Risk Assessment Complete', check: !!t.analysis.riskLevel },
+                                    ].map((item, idx) => (
+                                      <div key={idx} className="flex items-center gap-2 p-2 rounded-lg bg-white/[0.02]">
+                                        {item.check ? (
+                                          <CheckCircle2 size={14} className="text-emerald-500" />
+                                        ) : (
+                                          <AlertCircle size={14} className="text-amber-500" />
+                                        )}
+                                        <span className={`text-[11px] font-medium ${item.check ? 'text-slate-300' : 'text-amber-400'}`}>
+                                          {item.label}
+                                        </span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+
+                                {/* Context Info */}
+                                {t.context && (
+                                  <div className="bg-white/[0.02] border border-white/5 rounded-xl p-4 space-y-2">
+                                    <div className="flex items-center gap-2">
+                                      <FileText size={14} className="text-slate-400" />
+                                      <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Business Context</span>
+                                    </div>
+                                    <p className="text-sm text-slate-400 italic">{t.context}</p>
+                                  </div>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        )}
                       </React.Fragment>
                     ))}
                   </tbody>
@@ -800,7 +1302,17 @@ const App: React.FC = () => {
                       </div>
                       <div className="flex gap-2">
                         <button onClick={() => { setEditingAgreement(a); setShowModal('agreement'); }} className="p-2 hover:text-indigo-400 transition-colors"><Edit3 size={16}/></button>
-                        <button onClick={async () => { if(confirm('Delete this agreement?')) { await db.agreements.delete(a.id); setAgreements(prev => prev.filter(x => x.id !== a.id)); }}} className="p-2 hover:text-rose-500 transition-colors"><Trash2 size={16}/></button>
+                        <button onClick={async () => { 
+                          if(confirm('Delete this agreement?')) { 
+                            setAgreements(prev => {
+                              const updated = prev.filter(x => x.id !== a.id);
+                              localStorage.setItem('agreements', JSON.stringify(updated));
+                              return updated;
+                            });
+                            db.agreements.delete(a.id).catch(e => console.warn("Supabase delete failed:", e));
+                            setNotification({ message: "Agreement deleted.", type: 'success' });
+                          }
+                        }} className="p-2 hover:text-rose-500 transition-colors"><Trash2 size={16}/></button>
                       </div>
                     </div>
                   </div>
@@ -855,7 +1367,17 @@ const App: React.FC = () => {
                         </td>
                         <td className="px-6 py-5 text-right flex justify-end gap-2">
                           <button onClick={() => { setEditingInvoice(inv); setShowModal('invoice'); }} className="p-2 hover:text-indigo-400 transition-colors"><Edit3 size={16}/></button>
-                          <button onClick={async () => { if(confirm('Delete this invoice?')) { await db.invoices.delete(inv.id); setInvoices(prev => prev.filter(x => x.id !== inv.id)); }}} className="p-2 hover:text-rose-500 transition-colors"><Trash2 size={16}/></button>
+                          <button onClick={async () => { 
+                              if(confirm('Delete this invoice?')) { 
+                                setInvoices(prev => {
+                                  const updated = prev.filter(x => x.id !== inv.id);
+                                  localStorage.setItem('invoices', JSON.stringify(updated));
+                                  return updated;
+                                });
+                                db.invoices.delete(inv.id).catch(e => console.warn("Supabase delete failed:", e));
+                                setNotification({ message: "Invoice deleted.", type: 'success' });
+                              }
+                            }} className="p-2 hover:text-rose-500 transition-colors"><Trash2 size={16}/></button>
                         </td>
                       </tr>
                     ))}
@@ -923,17 +1445,79 @@ const App: React.FC = () => {
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                 {assets.map(asset => (
-                  <div key={asset.id} className="bg-[#121216] border border-white/5 rounded-3xl p-6 hover:border-indigo-500/30 transition-all group">
-                    <div className="flex justify-between items-start mb-4">
-                      <div className="p-3 bg-indigo-500/10 rounded-2xl">
-                        {asset.type.includes('image') ? <ImageIcon size={20} className="text-indigo-400" /> : <FileText size={20} className="text-indigo-400" />}
-                      </div>
-                      <span className="text-[9px] font-black px-2 py-1 rounded-lg bg-white/5 text-slate-500 uppercase">{asset.category}</span>
+                  <div key={asset.id} className="bg-[#121216] border border-white/5 rounded-3xl overflow-hidden hover:border-indigo-500/30 transition-all group">
+                    {/* Clickable Preview Area */}
+                    <div 
+                      className={`relative ${asset.type.includes('image') ? 'cursor-pointer' : ''}`}
+                      onClick={() => {
+                        if (asset.type.includes('image') && asset.url) {
+                          setViewingAsset(asset);
+                        }
+                      }}
+                    >
+                      {asset.type.includes('image') && asset.url ? (
+                        // Image thumbnail
+                        <div className="h-40 bg-black/50 relative overflow-hidden">
+                          <img 
+                            src={asset.url} 
+                            alt={asset.name}
+                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                          />
+                          <div className="absolute inset-0 bg-gradient-to-t from-[#121216] to-transparent opacity-60"></div>
+                          <div className="absolute bottom-2 left-2 right-2 flex items-center justify-between">
+                            <span className="text-[9px] font-black px-2 py-1 rounded-lg bg-black/50 backdrop-blur text-white uppercase">{asset.category}</span>
+                            <div className="p-2 bg-indigo-500/80 rounded-xl backdrop-blur">
+                              <Eye size={14} className="text-white" />
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        // Non-image file display
+                        <div className="h-40 flex items-center justify-center bg-gradient-to-br from-indigo-500/5 to-purple-500/5">
+                          <div className="text-center">
+                            <div className="p-4 bg-indigo-500/10 rounded-2xl inline-block mb-2">
+                              <FileText size={32} className="text-indigo-400" />
+                            </div>
+                            <span className="block text-[9px] font-black px-2 py-1 rounded-lg bg-white/5 text-slate-500 uppercase">{asset.category}</span>
+                          </div>
+                        </div>
+                      )}
                     </div>
-                    <h3 className="text-sm font-bold text-white mb-1 truncate group-hover:text-indigo-400 transition-colors">{asset.name}</h3>
-                    <p className="text-[10px] text-slate-500">{asset.size || 'Unknown size'}</p>
-                    <div className="flex justify-end gap-2 mt-4 pt-4 border-t border-white/5">
-                      <button onClick={async () => { if(confirm('Delete this asset?')) { await db.assets.delete(asset.id); setAssets(prev => prev.filter(x => x.id !== asset.id)); }}} className="p-2 hover:text-rose-500 transition-colors"><Trash2 size={16}/></button>
+                    
+                    {/* Info section */}
+                    <div className="p-4">
+                      <h3 className="text-sm font-bold text-white mb-1 truncate group-hover:text-indigo-400 transition-colors">{asset.name}</h3>
+                      <p className="text-[10px] text-slate-500">{asset.size || 'Unknown size'}</p>
+                      <div className="flex justify-between items-center gap-2 mt-3 pt-3 border-t border-white/5">
+                        {asset.type.includes('image') && asset.url ? (
+                          <button 
+                            onClick={() => setViewingAsset(asset)}
+                            className="text-[10px] text-indigo-400 hover:text-indigo-300 font-bold flex items-center gap-1"
+                          >
+                            <Eye size={12} /> View Full
+                          </button>
+                        ) : (
+                          <a 
+                            href={asset.url} 
+                            target="_blank" 
+                            rel="noopener noreferrer"
+                            className="text-[10px] text-indigo-400 hover:text-indigo-300 font-bold flex items-center gap-1"
+                          >
+                            <ExternalLink size={12} /> Open
+                          </a>
+                        )}
+                        <button onClick={async () => { 
+                            if(confirm('Delete this asset?')) { 
+                              setAssets(prev => {
+                                const updated = prev.filter(x => x.id !== asset.id);
+                                localStorage.setItem('assets', JSON.stringify(updated));
+                                return updated;
+                              });
+                              db.assets.delete(asset.id).catch(e => console.warn("Supabase delete failed:", e));
+                              setNotification({ message: "Asset deleted.", type: 'success' });
+                            }
+                          }} className="p-2 hover:text-rose-500 transition-colors"><Trash2 size={16}/></button>
+                      </div>
                     </div>
                   </div>
                 ))}
@@ -1026,17 +1610,739 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {/* Generic Modal Shell */}
-      {showModal && showModal !== 'mercury' && (
+      {/* Agreement Modal */}
+      {showModal === 'agreement' && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setShowModal(null)} />
+          <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => { setShowModal(null); setEditingAgreement(null); setTempAttachments([]); }} />
+          <div className="bg-[#121216] border border-white/10 w-full max-w-2xl rounded-3xl p-8 relative z-10 shadow-2xl max-h-[90vh] overflow-y-auto custom-scrollbar">
+            <button onClick={() => { setShowModal(null); setEditingAgreement(null); setTempAttachments([]); }} className="absolute top-6 right-6 text-slate-500 hover:text-white transition-colors"><X size={20} /></button>
+            
+            <div className="flex items-center gap-4 mb-8">
+              <div className="p-4 bg-indigo-600 rounded-2xl text-white">
+                <FileSignature size={28} />
+              </div>
+              <div>
+                <h3 className="text-xl font-black text-white">{editingAgreement ? 'Edit Agreement' : 'New Service Agreement'}</h3>
+                <p className="text-xs text-slate-500">Create a new client contract or retainer agreement</p>
+              </div>
+            </div>
+
+            <form onSubmit={async (e) => {
+              e.preventDefault();
+              const fd = new FormData(e.currentTarget);
+              const agreement: ClientAgreement = {
+                id: editingAgreement?.id || `agr_${Date.now()}`,
+                clientName: fd.get('clientName') as string,
+                effectiveDate: fd.get('effectiveDate') as string,
+                expirationDate: fd.get('expirationDate') as string || undefined,
+                status: fd.get('status') as 'Active' | 'Pending' | 'Expired',
+                scopeOfWork: fd.get('scopeOfWork') as string,
+                value: parseFloat(fd.get('value') as string) || 0,
+                notes: fd.get('notes') as string || undefined,
+                attachments: tempAttachments.length > 0 ? tempAttachments : (editingAgreement?.attachments || [])
+              };
+              
+              // Update local state first (always works)
+              if (editingAgreement) {
+                setAgreements(prev => {
+                  const updated = prev.map(a => a.id === agreement.id ? agreement : a);
+                  localStorage.setItem('agreements', JSON.stringify(updated));
+                  return updated;
+                });
+              } else {
+                setAgreements(prev => {
+                  const updated = [...prev, agreement];
+                  localStorage.setItem('agreements', JSON.stringify(updated));
+                  return updated;
+                });
+              }
+              
+              // Try to save to Supabase (optional - may fail if table doesn't exist)
+              try {
+                await db.agreements.upsert(agreement);
+              } catch (error) {
+                console.warn('Supabase save failed (table may not exist), saved locally:', error);
+              }
+              
+              setNotification({ message: editingAgreement ? 'Agreement updated!' : 'Agreement created!', type: 'success' });
+              setShowModal(null);
+              setEditingAgreement(null);
+              setTempAttachments([]);
+            }} className="space-y-6">
+              
+              {/* Client/Agreement Name */}
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Client / Agreement Name *</label>
+                <input 
+                  name="clientName" 
+                  type="text" 
+                  defaultValue={editingAgreement?.clientName || ''}
+                  placeholder="e.g., Neural Dynamics Corp - Master Services Agreement"
+                  required
+                  className="w-full bg-[#09090A] border border-white/10 rounded-xl py-4 px-5 text-sm text-white placeholder:text-slate-600 focus:border-indigo-500 outline-none transition-all"
+                />
+              </div>
+
+              {/* Description / Scope of Work */}
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Description / Scope of Work *</label>
+                <textarea 
+                  name="scopeOfWork" 
+                  defaultValue={editingAgreement?.scopeOfWork || ''}
+                  placeholder="Describe the services, deliverables, and scope covered by this agreement..."
+                  required
+                  rows={4}
+                  className="w-full bg-[#09090A] border border-white/10 rounded-xl py-4 px-5 text-sm text-white placeholder:text-slate-600 focus:border-indigo-500 outline-none transition-all resize-none"
+                />
+              </div>
+
+              {/* Contract Value & Status */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Contract Value ($)</label>
+                  <input 
+                    name="value" 
+                    type="number" 
+                    step="0.01"
+                    defaultValue={editingAgreement?.value || ''}
+                    placeholder="0.00"
+                    className="w-full bg-[#09090A] border border-white/10 rounded-xl py-4 px-5 text-sm text-white placeholder:text-slate-600 focus:border-indigo-500 outline-none transition-all"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Status</label>
+                  <select 
+                    name="status" 
+                    defaultValue={editingAgreement?.status || 'Active'}
+                    className="w-full bg-[#09090A] border border-white/10 rounded-xl py-4 px-5 text-sm text-white focus:border-indigo-500 outline-none transition-all"
+                  >
+                    <option value="Active">Active</option>
+                    <option value="Pending">Pending</option>
+                    <option value="Expired">Expired</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Dates */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Effective Date *</label>
+                  <input 
+                    name="effectiveDate" 
+                    type="date" 
+                    defaultValue={editingAgreement?.effectiveDate || new Date().toISOString().split('T')[0]}
+                    required
+                    className="w-full bg-[#09090A] border border-white/10 rounded-xl py-4 px-5 text-sm text-white focus:border-indigo-500 outline-none transition-all"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Expiration Date</label>
+                  <input 
+                    name="expirationDate" 
+                    type="date" 
+                    defaultValue={editingAgreement?.expirationDate || ''}
+                    className="w-full bg-[#09090A] border border-white/10 rounded-xl py-4 px-5 text-sm text-white focus:border-indigo-500 outline-none transition-all"
+                  />
+                </div>
+              </div>
+
+              {/* Notes */}
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Additional Notes</label>
+                <textarea 
+                  name="notes" 
+                  defaultValue={editingAgreement?.notes || ''}
+                  placeholder="Any additional notes, special terms, or reminders..."
+                  rows={2}
+                  className="w-full bg-[#09090A] border border-white/10 rounded-xl py-4 px-5 text-sm text-white placeholder:text-slate-600 focus:border-indigo-500 outline-none transition-all resize-none"
+                />
+              </div>
+
+              {/* PDF Upload */}
+              <div className="space-y-3">
+                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Agreement Document (PDF)</label>
+                <div 
+                  className="border-2 border-dashed border-white/10 rounded-2xl p-8 text-center hover:border-indigo-500/50 transition-all cursor-pointer group"
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  <input 
+                    ref={fileInputRef}
+                    type="file" 
+                    accept=".pdf,.doc,.docx"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) {
+                        const newAttachment: Attachment = {
+                          id: `att_${Date.now()}`,
+                          name: file.name,
+                          type: file.type,
+                          url: URL.createObjectURL(file),
+                          dateAdded: new Date().toISOString().split('T')[0]
+                        };
+                        setTempAttachments(prev => [...prev, newAttachment]);
+                        setNotification({ message: `File "${file.name}" attached`, type: 'success' });
+                      }
+                    }}
+                  />
+                  <div className="p-4 bg-indigo-500/10 rounded-2xl inline-block mb-4 group-hover:bg-indigo-500/20 transition-all">
+                    <UploadCloud size={32} className="text-indigo-400" />
+                  </div>
+                  <p className="text-sm text-slate-400 mb-1">Click to upload agreement PDF</p>
+                  <p className="text-[10px] text-slate-600">Supports PDF, DOC, DOCX files</p>
+                </div>
+
+                {/* Attached Files */}
+                {(tempAttachments.length > 0 || (editingAgreement?.attachments && editingAgreement.attachments.length > 0)) && (
+                  <div className="space-y-2 mt-4">
+                    <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Attached Documents</span>
+                    <div className="space-y-2">
+                      {[...tempAttachments, ...(editingAgreement?.attachments || [])].map((att, idx) => (
+                        <div key={att.id || idx} className="flex items-center justify-between p-3 bg-white/[0.02] rounded-xl border border-white/5">
+                          <div className="flex items-center gap-3">
+                            <div className="p-2 bg-rose-500/10 rounded-lg">
+                              <FileText size={16} className="text-rose-400" />
+                            </div>
+                            <div>
+                              <p className="text-xs font-bold text-white">{att.name}</p>
+                              <p className="text-[9px] text-slate-500">Added: {att.dateAdded}</p>
+                            </div>
+                          </div>
+                          <button 
+                            type="button"
+                            onClick={() => {
+                              setTempAttachments(prev => prev.filter(a => a.id !== att.id));
+                            }}
+                            className="p-2 text-slate-500 hover:text-rose-400 transition-colors"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Submit Button */}
+              <div className="flex gap-3 pt-4">
+                <button 
+                  type="button" 
+                  onClick={() => { setShowModal(null); setEditingAgreement(null); setTempAttachments([]); }}
+                  className="flex-1 py-4 bg-white/5 hover:bg-white/10 text-slate-400 font-bold uppercase tracking-widest rounded-xl transition-all"
+                >
+                  Cancel
+                </button>
+                <button 
+                  type="submit"
+                  className="flex-1 py-4 bg-indigo-600 hover:bg-indigo-500 text-white font-black uppercase tracking-widest rounded-xl transition-all shadow-lg active:scale-95 flex items-center justify-center gap-2"
+                >
+                  <Check size={18} />
+                  {editingAgreement ? 'Update Agreement' : 'Create Agreement'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Transaction Modal */}
+      {showModal === 'transaction' && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => { setShowModal(null); setEditingTransaction(null); }} />
           <div className="bg-[#121216] border border-white/10 w-full max-w-xl rounded-3xl p-8 relative z-10 shadow-2xl max-h-[90vh] overflow-y-auto custom-scrollbar">
-             <button onClick={() => setShowModal(null)} className="absolute top-6 right-6 text-slate-500 hover:text-white transition-colors"><X size={20} /></button>
-             {/* ... Modal content implementation same as provided in original App.tsx ... */}
-             <div className="text-center py-12">
-               <h3 className="text-white font-bold">Standard Form Placeholder</h3>
-               <p className="text-xs text-slate-500 mt-2">Section-specific editing mode active.</p>
-             </div>
+            <button onClick={() => { setShowModal(null); setEditingTransaction(null); }} className="absolute top-6 right-6 text-slate-500 hover:text-white transition-colors"><X size={20} /></button>
+            
+            <div className="flex items-center gap-4 mb-8">
+              <div className="p-4 bg-indigo-600 rounded-2xl text-white">
+                <Receipt size={28} />
+              </div>
+              <div>
+                <h3 className="text-xl font-black text-white">{editingTransaction ? 'Edit Transaction' : 'New Transaction'}</h3>
+                <p className="text-xs text-slate-500">Add or edit an expenditure record</p>
+              </div>
+            </div>
+
+            <form onSubmit={async (e) => {
+              e.preventDefault();
+              const fd = new FormData(e.currentTarget);
+              const transaction: Transaction = {
+                id: editingTransaction?.id || `txn_${Date.now()}`,
+                date: fd.get('date') as string,
+                vendor: fd.get('vendor') as string,
+                amount: parseFloat(fd.get('amount') as string) || 0,
+                category: fd.get('category') as string,
+                context: fd.get('context') as string || undefined,
+                attachments: editingTransaction?.attachments || [],
+                bankVerified: false
+              };
+              
+              // Update local state first
+              if (editingTransaction) {
+                setTransactions(prev => prev.map(t => t.id === transaction.id ? transaction : t));
+              } else {
+                setTransactions(prev => [...prev, transaction]);
+              }
+              
+              // Try Supabase (optional)
+              try {
+                await db.transactions.upsert(transaction);
+              } catch (error) {
+                console.warn('Supabase save failed, saved locally:', error);
+              }
+              
+              setNotification({ message: editingTransaction ? 'Transaction updated!' : 'Transaction added!', type: 'success' });
+              setShowModal(null);
+              setEditingTransaction(null);
+            }} className="space-y-6">
+              
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Date *</label>
+                  <input 
+                    name="date" 
+                    type="date" 
+                    defaultValue={editingTransaction?.date || new Date().toISOString().split('T')[0]}
+                    required
+                    className="w-full bg-[#09090A] border border-white/10 rounded-xl py-4 px-5 text-sm text-white focus:border-indigo-500 outline-none transition-all"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Amount ($) *</label>
+                  <input 
+                    name="amount" 
+                    type="number" 
+                    step="0.01"
+                    defaultValue={editingTransaction?.amount || ''}
+                    placeholder="0.00"
+                    required
+                    className="w-full bg-[#09090A] border border-white/10 rounded-xl py-4 px-5 text-sm text-white placeholder:text-slate-600 focus:border-indigo-500 outline-none transition-all"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Vendor *</label>
+                <input 
+                  name="vendor" 
+                  type="text" 
+                  defaultValue={editingTransaction?.vendor || ''}
+                  placeholder="e.g., OpenAI, Apple Inc., AWS"
+                  required
+                  className="w-full bg-[#09090A] border border-white/10 rounded-xl py-4 px-5 text-sm text-white placeholder:text-slate-600 focus:border-indigo-500 outline-none transition-all"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Category</label>
+                <select 
+                  name="category" 
+                  defaultValue={editingTransaction?.category || 'Software/SaaS'}
+                  className="w-full bg-[#09090A] border border-white/10 rounded-xl py-4 px-5 text-sm text-white focus:border-indigo-500 outline-none transition-all"
+                >
+                  <option value="Software/SaaS">Software/SaaS</option>
+                  <option value="Hardware">Hardware</option>
+                  <option value="Marketing">Marketing</option>
+                  <option value="Professional Services">Professional Services</option>
+                  <option value="Office Supplies">Office Supplies</option>
+                  <option value="Travel">Travel</option>
+                  <option value="Meals & Entertainment">Meals & Entertainment</option>
+                  <option value="Utilities">Utilities</option>
+                  <option value="Insurance">Insurance</option>
+                  <option value="Other">Other</option>
+                </select>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Business Context</label>
+                <textarea 
+                  name="context" 
+                  defaultValue={editingTransaction?.context || ''}
+                  placeholder="Describe the business purpose of this expense..."
+                  rows={3}
+                  className="w-full bg-[#09090A] border border-white/10 rounded-xl py-4 px-5 text-sm text-white placeholder:text-slate-600 focus:border-indigo-500 outline-none transition-all resize-none"
+                />
+              </div>
+
+              <div className="flex gap-3 pt-4">
+                <button 
+                  type="button" 
+                  onClick={() => { setShowModal(null); setEditingTransaction(null); }}
+                  className="flex-1 py-4 bg-white/5 hover:bg-white/10 text-slate-400 font-bold uppercase tracking-widest rounded-xl transition-all"
+                >
+                  Cancel
+                </button>
+                <button 
+                  type="submit"
+                  className="flex-1 py-4 bg-indigo-600 hover:bg-indigo-500 text-white font-black uppercase tracking-widest rounded-xl transition-all shadow-lg active:scale-95 flex items-center justify-center gap-2"
+                >
+                  <Check size={18} />
+                  {editingTransaction ? 'Update' : 'Add Transaction'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Invoice Modal */}
+      {showModal === 'invoice' && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => { setShowModal(null); setEditingInvoice(null); }} />
+          <div className="bg-[#121216] border border-white/10 w-full max-w-xl rounded-3xl p-8 relative z-10 shadow-2xl max-h-[90vh] overflow-y-auto custom-scrollbar">
+            <button onClick={() => { setShowModal(null); setEditingInvoice(null); }} className="absolute top-6 right-6 text-slate-500 hover:text-white transition-colors"><X size={20} /></button>
+            
+            <div className="flex items-center gap-4 mb-8">
+              <div className="p-4 bg-emerald-600 rounded-2xl text-white">
+                <CreditCard size={28} />
+              </div>
+              <div>
+                <h3 className="text-xl font-black text-white">{editingInvoice ? 'Edit Invoice' : 'New Invoice'}</h3>
+                <p className="text-xs text-slate-500">Create or edit a client invoice</p>
+              </div>
+            </div>
+
+            <form onSubmit={async (e) => {
+              e.preventDefault();
+              const fd = new FormData(e.currentTarget);
+              const invoice: Invoice = {
+                id: editingInvoice?.id || `inv_${Date.now()}`,
+                invoiceNumber: fd.get('invoiceNumber') as string,
+                clientName: fd.get('clientName') as string,
+                issueDate: fd.get('issueDate') as string,
+                dueDate: fd.get('dueDate') as string,
+                amount: parseFloat(fd.get('amount') as string) || 0,
+                description: fd.get('description') as string,
+                status: fd.get('status') as 'Paid' | 'Sent' | 'Draft' | 'Overdue'
+              };
+              
+              // Update local state first
+              if (editingInvoice) {
+                setInvoices(prev => {
+                  const updated = prev.map(i => i.id === invoice.id ? invoice : i);
+                  localStorage.setItem('invoices', JSON.stringify(updated));
+                  return updated;
+                });
+              } else {
+                setInvoices(prev => {
+                  const updated = [...prev, invoice];
+                  localStorage.setItem('invoices', JSON.stringify(updated));
+                  return updated;
+                });
+              }
+              
+              // Try Supabase (optional)
+              try {
+                await db.invoices.upsert(invoice);
+              } catch (error) {
+                console.warn('Supabase save failed, saved locally:', error);
+              }
+              
+              setNotification({ message: editingInvoice ? 'Invoice updated!' : 'Invoice created!', type: 'success' });
+              setShowModal(null);
+              setEditingInvoice(null);
+            }} className="space-y-6">
+              
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Invoice Number *</label>
+                  <input 
+                    name="invoiceNumber" 
+                    type="text" 
+                    defaultValue={editingInvoice?.invoiceNumber || `INV-${new Date().getFullYear()}-${String(invoices.length + 1).padStart(3, '0')}`}
+                    required
+                    className="w-full bg-[#09090A] border border-white/10 rounded-xl py-4 px-5 text-sm text-white focus:border-indigo-500 outline-none transition-all"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Amount ($) *</label>
+                  <input 
+                    name="amount" 
+                    type="number" 
+                    step="0.01"
+                    defaultValue={editingInvoice?.amount || ''}
+                    placeholder="0.00"
+                    required
+                    className="w-full bg-[#09090A] border border-white/10 rounded-xl py-4 px-5 text-sm text-white placeholder:text-slate-600 focus:border-indigo-500 outline-none transition-all"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Client Name *</label>
+                <input 
+                  name="clientName" 
+                  type="text" 
+                  defaultValue={editingInvoice?.clientName || ''}
+                  placeholder="e.g., Neural Dynamics Corp"
+                  required
+                  className="w-full bg-[#09090A] border border-white/10 rounded-xl py-4 px-5 text-sm text-white placeholder:text-slate-600 focus:border-indigo-500 outline-none transition-all"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Description *</label>
+                <textarea 
+                  name="description" 
+                  defaultValue={editingInvoice?.description || ''}
+                  placeholder="Describe the services or deliverables..."
+                  required
+                  rows={2}
+                  className="w-full bg-[#09090A] border border-white/10 rounded-xl py-4 px-5 text-sm text-white placeholder:text-slate-600 focus:border-indigo-500 outline-none transition-all resize-none"
+                />
+              </div>
+
+              <div className="grid grid-cols-3 gap-4">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Issue Date *</label>
+                  <input 
+                    name="issueDate" 
+                    type="date" 
+                    defaultValue={editingInvoice?.issueDate || new Date().toISOString().split('T')[0]}
+                    required
+                    className="w-full bg-[#09090A] border border-white/10 rounded-xl py-4 px-5 text-sm text-white focus:border-indigo-500 outline-none transition-all"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Due Date *</label>
+                  <input 
+                    name="dueDate" 
+                    type="date" 
+                    defaultValue={editingInvoice?.dueDate || ''}
+                    required
+                    className="w-full bg-[#09090A] border border-white/10 rounded-xl py-4 px-5 text-sm text-white focus:border-indigo-500 outline-none transition-all"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Status</label>
+                  <select 
+                    name="status" 
+                    defaultValue={editingInvoice?.status || 'Draft'}
+                    className="w-full bg-[#09090A] border border-white/10 rounded-xl py-4 px-5 text-sm text-white focus:border-indigo-500 outline-none transition-all"
+                  >
+                    <option value="Draft">Draft</option>
+                    <option value="Sent">Sent</option>
+                    <option value="Paid">Paid</option>
+                    <option value="Overdue">Overdue</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="flex gap-3 pt-4">
+                <button 
+                  type="button" 
+                  onClick={() => { setShowModal(null); setEditingInvoice(null); }}
+                  className="flex-1 py-4 bg-white/5 hover:bg-white/10 text-slate-400 font-bold uppercase tracking-widest rounded-xl transition-all"
+                >
+                  Cancel
+                </button>
+                <button 
+                  type="submit"
+                  className="flex-1 py-4 bg-emerald-600 hover:bg-emerald-500 text-white font-black uppercase tracking-widest rounded-xl transition-all shadow-lg active:scale-95 flex items-center justify-center gap-2"
+                >
+                  <Check size={18} />
+                  {editingInvoice ? 'Update Invoice' : 'Create Invoice'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Asset Upload Modal */}
+      {showModal === 'asset' && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => { setShowModal(null); setUploadPreview(null); }} />
+          <div className="bg-[#121216] border border-white/10 w-full max-w-md rounded-3xl p-8 relative z-10 shadow-2xl">
+            <button onClick={() => { setShowModal(null); setUploadPreview(null); }} className="absolute top-6 right-6 text-slate-500 hover:text-white transition-colors"><X size={20} /></button>
+            
+            <div className="flex items-center gap-4 mb-8">
+              <div className="p-4 bg-purple-600 rounded-2xl text-white">
+                <HardDrive size={28} />
+              </div>
+              <div>
+                <h3 className="text-xl font-black text-white">Upload Asset</h3>
+                <p className="text-xs text-slate-500">Add a new company asset or document</p>
+              </div>
+            </div>
+
+            <form onSubmit={async (e) => {
+              e.preventDefault();
+              const fd = new FormData(e.currentTarget);
+              const fileInput = assetInputRef.current;
+              const file = fileInput?.files?.[0];
+              
+              if (!file) {
+                setNotification({ message: 'Please select a file', type: 'alert' });
+                return;
+              }
+
+              // Convert file to base64 for persistence
+              const reader = new FileReader();
+              reader.onload = async () => {
+                const base64Url = reader.result as string;
+                
+                const asset: CompanyAsset = {
+                  id: `asset_${Date.now()}`,
+                  name: file.name,
+                  type: file.type,
+                  url: base64Url, // Store as base64 data URL
+                  category: fd.get('category') as 'Branding' | 'Legal' | 'Marketing' | 'Internal',
+                  dateAdded: new Date().toISOString().split('T')[0],
+                  size: `${(file.size / 1024).toFixed(1)}KB`
+                };
+                
+                // Update local state first
+                setAssets(prev => {
+                  const updated = [...prev, asset];
+                  localStorage.setItem('assets', JSON.stringify(updated));
+                  return updated;
+                });
+                
+                // Try Supabase (optional)
+                try {
+                  await db.assets.upsert(asset);
+                } catch (error) {
+                  console.warn('Supabase save failed, saved locally:', error);
+                }
+                
+                setNotification({ message: 'Asset uploaded!', type: 'success' });
+                setShowModal(null);
+                setUploadPreview(null);
+              };
+              
+              reader.onerror = () => {
+                setNotification({ message: 'Failed to read file', type: 'alert' });
+              };
+              
+              reader.readAsDataURL(file);
+            }} className="space-y-6">
+              
+              <div 
+                className="border-2 border-dashed border-white/10 rounded-2xl p-8 text-center hover:border-purple-500/50 transition-all cursor-pointer group relative overflow-hidden"
+                onClick={() => assetInputRef.current?.click()}
+              >
+                <input 
+                  ref={assetInputRef}
+                  type="file" 
+                  className="hidden"
+                  accept="image/*,.pdf,.doc,.docx,.xls,.xlsx"
+                  required
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file && file.type.startsWith('image/')) {
+                      const reader = new FileReader();
+                      reader.onload = () => setUploadPreview(reader.result as string);
+                      reader.readAsDataURL(file);
+                    } else {
+                      setUploadPreview(null);
+                    }
+                  }}
+                />
+                {uploadPreview ? (
+                  <div className="relative">
+                    <img src={uploadPreview} alt="Preview" className="max-h-32 mx-auto rounded-xl mb-3" />
+                    <p className="text-sm text-emerald-400 font-bold flex items-center justify-center gap-2">
+                      <CheckCircle2 size={16} /> Image ready to upload
+                    </p>
+                    <p className="text-[10px] text-slate-600 mt-1">Click to change file</p>
+                  </div>
+                ) : (
+                  <>
+                    <div className="p-4 bg-purple-500/10 rounded-2xl inline-block mb-4 group-hover:bg-purple-500/20 transition-all">
+                      <UploadCloud size={32} className="text-purple-400" />
+                    </div>
+                    <p className="text-sm text-slate-400 mb-1">Click to select a file</p>
+                    <p className="text-[10px] text-slate-600">Images, PDFs, documents</p>
+                  </>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Category</label>
+                <select 
+                  name="category" 
+                  defaultValue="Branding"
+                  className="w-full bg-[#09090A] border border-white/10 rounded-xl py-4 px-5 text-sm text-white focus:border-indigo-500 outline-none transition-all"
+                >
+                  <option value="Branding">Branding</option>
+                  <option value="Legal">Legal</option>
+                  <option value="Marketing">Marketing</option>
+                  <option value="Internal">Internal</option>
+                </select>
+              </div>
+
+              <div className="flex gap-3 pt-4">
+                <button 
+                  type="button" 
+                  onClick={() => { setShowModal(null); setUploadPreview(null); }}
+                  className="flex-1 py-4 bg-white/5 hover:bg-white/10 text-slate-400 font-bold uppercase tracking-widest rounded-xl transition-all"
+                >
+                  Cancel
+                </button>
+                <button 
+                  type="submit"
+                  className="flex-1 py-4 bg-purple-600 hover:bg-purple-500 text-white font-black uppercase tracking-widest rounded-xl transition-all shadow-lg active:scale-95 flex items-center justify-center gap-2"
+                >
+                  <UploadCloud size={18} />
+                  Upload
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Image Viewer Lightbox */}
+      {viewingAsset && (
+        <div className="fixed inset-0 z-[150] flex items-center justify-center p-4">
+          <div 
+            className="absolute inset-0 bg-black/95 backdrop-blur-xl" 
+            onClick={() => setViewingAsset(null)} 
+          />
+          <div className="relative z-10 max-w-6xl max-h-[90vh] flex flex-col">
+            {/* Header */}
+            <div className="flex items-center justify-between mb-4 px-2">
+              <div className="flex items-center gap-4">
+                <div className="p-3 bg-indigo-500/20 rounded-xl">
+                  <ImageIcon size={20} className="text-indigo-400" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-white">{viewingAsset.name}</h3>
+                  <p className="text-xs text-slate-500">{viewingAsset.size} • {viewingAsset.category}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <a 
+                  href={viewingAsset.url}
+                  download={viewingAsset.name}
+                  className="p-3 bg-white/5 hover:bg-white/10 rounded-xl transition-colors"
+                  title="Download"
+                >
+                  <Download size={18} className="text-slate-400" />
+                </a>
+                <button 
+                  onClick={() => setViewingAsset(null)}
+                  className="p-3 bg-white/5 hover:bg-rose-500/20 rounded-xl transition-colors"
+                >
+                  <X size={18} className="text-slate-400 hover:text-rose-400" />
+                </button>
+              </div>
+            </div>
+            
+            {/* Image Container */}
+            <div className="relative bg-[#0a0a0a] rounded-2xl border border-white/10 overflow-hidden shadow-2xl">
+              <img 
+                src={viewingAsset.url} 
+                alt={viewingAsset.name}
+                className="max-w-full max-h-[75vh] object-contain mx-auto"
+              />
+            </div>
+            
+            {/* Footer hint */}
+            <p className="text-center text-[10px] text-slate-600 mt-3">
+              Click outside or press ESC to close
+            </p>
           </div>
         </div>
       )}
