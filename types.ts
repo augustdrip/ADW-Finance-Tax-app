@@ -36,6 +36,7 @@ export interface Transaction {
   attachments: Attachment[];
   bankVerified?: boolean; // Added for Mercury Integration
   bankId?: string;       // Original Mercury Transaction ID
+  madeBy?: string;       // Who made this expense (e.g., "Ali", "Mustafa", etc.)
 }
 
 export interface TaxAnalysis {

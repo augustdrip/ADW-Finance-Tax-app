@@ -79,6 +79,9 @@ const COMPANY_INFO = {
   routingNumber: "091311229"
 };
 
+// Team members who can make expenses
+const TEAM_MEMBERS = ['Ali', 'Mustafa', 'Sajjad', 'Mario'];
+
 const MOCK_DATA = {
   transactions: [
     { id: 'm1', date: '2024-05-15', vendor: 'OpenAI', amount: 2500.00, category: 'Software/SaaS', context: 'API credits for custom LLM integration on Client Project X.', attachments: [], bankVerified: true },
@@ -1306,6 +1309,7 @@ const App: React.FC = () => {
                       <th className="px-2 py-4">Date</th>
                       <th className="px-6 py-4">Vendor</th>
                       <th className="px-6 py-4">Amount</th>
+                      <th className="px-6 py-4">Made By</th>
                       <th className="px-6 py-4 text-center">Verify</th>
                       <th className="px-6 py-4 text-center">Status</th>
                       <th className="px-6 py-4 text-right">Controls</th>
@@ -1319,6 +1323,30 @@ const App: React.FC = () => {
                           <td className="px-2 py-5 text-[11px] font-mono">{t.date}</td>
                           <td className="px-6 py-5 font-bold text-white">{t.vendor}</td>
                           <td className="px-6 py-5 font-mono">${t.amount.toLocaleString()}</td>
+                          <td className="px-6 py-5">
+                            <select
+                              value={t.madeBy || ''}
+                              onChange={(e) => {
+                                const newMadeBy = e.target.value;
+                                setTransactions(prev => {
+                                  const updated = prev.map(tx => 
+                                    tx.id === t.id ? { ...tx, madeBy: newMadeBy || undefined } : tx
+                                  );
+                                  // Save to localStorage
+                                  const mercuryTransactions = updated.filter(tx => tx.bankVerified || tx.bankId);
+                                  localStorage.setItem('mercury_transactions', JSON.stringify(mercuryTransactions));
+                                  localStorage.setItem('transactions', JSON.stringify(updated));
+                                  return updated;
+                                });
+                              }}
+                              className="bg-[#09090A] border border-white/10 rounded-lg py-1 px-2 text-xs text-white focus:border-indigo-500 outline-none cursor-pointer"
+                            >
+                              <option value="">--</option>
+                              {TEAM_MEMBERS.map(member => (
+                                <option key={member} value={member}>{member}</option>
+                              ))}
+                            </select>
+                          </td>
                           <td className="px-6 py-5 text-center">
                              {t.bankVerified ? (
                                <div className="flex items-center justify-center text-indigo-400 gap-1.5" title="Mercury Bank Verified">
@@ -1368,7 +1396,7 @@ const App: React.FC = () => {
                         {/* Expandable IRC Compliance Dropdown */}
                         {expandedAnalysisId === t.id && t.analysis && (
                           <tr className="bg-indigo-500/5">
-                            <td colSpan={7} className="px-6 py-6">
+                            <td colSpan={8} className="px-6 py-6">
                               <div className="bg-[#0D0D10] border border-indigo-500/20 rounded-2xl p-6 space-y-6 animate-in slide-in-from-top-2 duration-300">
                                 <div className="flex items-center justify-between">
                                   <div className="flex items-center gap-3">
@@ -2467,6 +2495,7 @@ const App: React.FC = () => {
                 amount: parseFloat(fd.get('amount') as string) || 0,
                 category: fd.get('category') as string,
                 context: fd.get('context') as string || undefined,
+                madeBy: fd.get('madeBy') as string || undefined,
                 attachments: editingTransaction?.attachments || [],
                 bankVerified: false
               };
@@ -2527,24 +2556,39 @@ const App: React.FC = () => {
                 />
               </div>
 
-              <div className="space-y-2">
-                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Category</label>
-                <select 
-                  name="category" 
-                  defaultValue={editingTransaction?.category || 'Software/SaaS'}
-                  className="w-full bg-[#09090A] border border-white/10 rounded-xl py-4 px-5 text-sm text-white focus:border-indigo-500 outline-none transition-all"
-                >
-                  <option value="Software/SaaS">Software/SaaS</option>
-                  <option value="Hardware">Hardware</option>
-                  <option value="Marketing">Marketing</option>
-                  <option value="Professional Services">Professional Services</option>
-                  <option value="Office Supplies">Office Supplies</option>
-                  <option value="Travel">Travel</option>
-                  <option value="Meals & Entertainment">Meals & Entertainment</option>
-                  <option value="Utilities">Utilities</option>
-                  <option value="Insurance">Insurance</option>
-                  <option value="Other">Other</option>
-                </select>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Category</label>
+                  <select 
+                    name="category" 
+                    defaultValue={editingTransaction?.category || 'Software/SaaS'}
+                    className="w-full bg-[#09090A] border border-white/10 rounded-xl py-4 px-5 text-sm text-white focus:border-indigo-500 outline-none transition-all"
+                  >
+                    <option value="Software/SaaS">Software/SaaS</option>
+                    <option value="Hardware">Hardware</option>
+                    <option value="Marketing">Marketing</option>
+                    <option value="Professional Services">Professional Services</option>
+                    <option value="Office Supplies">Office Supplies</option>
+                    <option value="Travel">Travel</option>
+                    <option value="Meals & Entertainment">Meals & Entertainment</option>
+                    <option value="Utilities">Utilities</option>
+                    <option value="Insurance">Insurance</option>
+                    <option value="Other">Other</option>
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Made By</label>
+                  <select 
+                    name="madeBy" 
+                    defaultValue={editingTransaction?.madeBy || ''}
+                    className="w-full bg-[#09090A] border border-white/10 rounded-xl py-4 px-5 text-sm text-white focus:border-indigo-500 outline-none transition-all"
+                  >
+                    <option value="">-- Select Person --</option>
+                    {TEAM_MEMBERS.map(member => (
+                      <option key={member} value={member}>{member}</option>
+                    ))}
+                  </select>
+                </div>
               </div>
 
               <div className="space-y-2">
