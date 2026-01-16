@@ -882,14 +882,13 @@ const App: React.FC = () => {
                 </div>
 
                 {/* Mercury Credit Card Balance */}
-                {accountBalances.credit > 0 && (
                 <div className="bg-[#121216] border border-rose-500/20 rounded-[2rem] p-8 shadow-2xl relative overflow-hidden group">
                    <div className="relative z-10 space-y-4">
                       <div className="flex justify-between items-start">
                         <div className="p-3 bg-rose-600 rounded-2xl text-white shadow-xl shadow-rose-600/20 group-hover:rotate-12 transition-transform">
                           <CreditCard size={24} />
                         </div>
-                        <span className="text-[8px] font-black text-rose-400 border border-rose-400/20 px-2 py-1 rounded-full uppercase tracking-widest">Credit</span>
+                        <span className="text-[8px] font-black text-rose-400 border border-rose-400/20 px-2 py-1 rounded-full uppercase tracking-widest">Credit Card</span>
                       </div>
                       <div>
                         <div className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mb-1">Credit Card Balance</div>
@@ -897,12 +896,11 @@ const App: React.FC = () => {
                       </div>
                       <div className="pt-4 border-t border-white/5">
                          <div className="text-[9px] font-bold text-slate-500">
-                           Amount Owed
+                           {accountBalances.credit > 0 ? 'Amount Owed' : 'No Balance'}
                          </div>
                       </div>
                    </div>
                 </div>
-                )}
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
