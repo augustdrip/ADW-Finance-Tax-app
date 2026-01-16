@@ -28,6 +28,9 @@ interface MercuryAccount {
   type: string;
   availableBalance: number;
   currentBalance: number;
+  // Credit card specific fields
+  creditLimit?: number;
+  pendingBalance?: number;
 }
 
 /**
@@ -233,23 +236,31 @@ export const mercuryService = {
    * Fetches account balances by type (checking, savings, credit)
    * @param apiKey - Optional. If not provided, uses MERCURY_API_KEY from .env.local
    */
-  async fetchAccountBalances(apiKey?: string): Promise<{ total: number; checking: number; savings: number; credit: number; accounts: Array<{ name: string; type: string; balance: number }> }> {
+  async fetchAccountBalances(apiKey?: string): Promise<{ 
+    total: number; 
+    checking: number; 
+    savings: number; 
+    credit: number; 
+    creditLimit: number;
+    creditAvailable: number;
+    creditPending: number;
+    accounts: Array<{ name: string; type: string; balance: number }> 
+  }> {
     const key = apiKey || ENV_MERCURY_KEY;
     const accounts = await this.fetchAccounts(key);
-    console.log("[Mercury] All accounts:", accounts.map(a => ({ 
-      name: a.name, 
-      type: a.type, 
-      availableBalance: a.availableBalance, 
-      currentBalance: a.currentBalance 
-    })));
+    console.log("[Mercury] All accounts (raw):", JSON.stringify(accounts, null, 2));
     
     let checking = 0;
     let savings = 0;
     let credit = 0;
+    let creditLimit = 0;
+    let creditAvailable = 0;
+    let creditPending = 0;
     const accountDetails: Array<{ name: string; type: string; balance: number }> = [];
     
     accounts.forEach(acc => {
-      const balance = acc.availableBalance || acc.currentBalance || 0;
+      const balance = acc.currentBalance || acc.availableBalance || 0;
+      const available = acc.availableBalance || 0;
       accountDetails.push({ name: acc.name, type: acc.type, balance });
       
       // Mercury account types: checking, savings, credit, etc.
@@ -257,8 +268,12 @@ export const mercuryService = {
       const nameLower = (acc.name || '').toLowerCase();
       
       if (typeLower.includes('credit') || nameLower.includes('credit')) {
-        // Credit card balances are typically negative (amount owed)
-        credit += Math.abs(balance);
+        // Credit card: currentBalance is amount owed, availableBalance is remaining credit
+        credit = Math.abs(balance);
+        creditAvailable = available;
+        creditLimit = (acc as any).creditLimit || credit + available; // If no explicit limit, estimate from balance + available
+        creditPending = (acc as any).pendingBalance || 0;
+        console.log("[Mercury] Credit card found:", { credit, creditAvailable, creditLimit, creditPending });
       } else if (typeLower.includes('saving') || nameLower.includes('saving')) {
         savings += balance;
       } else {
@@ -268,9 +283,9 @@ export const mercuryService = {
     });
     
     const total = checking + savings;
-    console.log("[Mercury] Checking:", checking, "Savings:", savings, "Credit:", credit, "Total:", total);
+    console.log("[Mercury] Checking:", checking, "Savings:", savings, "Credit:", credit, "CreditAvailable:", creditAvailable, "Total:", total);
     
-    return { total, checking, savings, credit, accounts: accountDetails };
+    return { total, checking, savings, credit, creditLimit, creditAvailable, creditPending, accounts: accountDetails };
   },
 
   /**

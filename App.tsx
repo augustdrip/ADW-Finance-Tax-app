@@ -274,9 +274,16 @@ const App: React.FC = () => {
   }, [transactions, currentMonth, activeTab]);
 
   const [bankBalance, setBankBalance] = useState<number>(parseFloat(localStorage.getItem('mercury_balance') || '0'));
-  const [accountBalances, setAccountBalances] = useState<{ checking: number; savings: number; credit: number }>(() => {
+  const [accountBalances, setAccountBalances] = useState<{ 
+    checking: number; 
+    savings: number; 
+    credit: number;
+    creditLimit: number;
+    creditAvailable: number;
+    creditPending: number;
+  }>(() => {
     const saved = localStorage.getItem('mercury_accounts');
-    return saved ? JSON.parse(saved) : { checking: 0, savings: 0, credit: 0 };
+    return saved ? JSON.parse(saved) : { checking: 0, savings: 0, credit: 0, creditLimit: 0, creditAvailable: 0, creditPending: 0 };
   });
 
   const stats: DashboardStats = useMemo(() => {
@@ -386,7 +393,7 @@ const App: React.FC = () => {
       localStorage.removeItem('mercury_accounts');
       setLastSyncTime('Never');
       setBankBalance(0);
-      setAccountBalances({ checking: 0, savings: 0, credit: 0 });
+      setAccountBalances({ checking: 0, savings: 0, credit: 0, creditLimit: 0, creditAvailable: 0, creditPending: 0 });
       setMercuryKeyError(null);
     } catch (e) {
       console.warn('Failed to reset Mercury sync state:', e);
@@ -432,9 +439,23 @@ const App: React.FC = () => {
         const balanceData = await mercuryService.fetchAccountBalances(keyToUse);
         // Mercury returns balance in dollars (not cents)
         setBankBalance(balanceData.total);
-        setAccountBalances({ checking: balanceData.checking, savings: balanceData.savings, credit: balanceData.credit });
+        setAccountBalances({ 
+          checking: balanceData.checking, 
+          savings: balanceData.savings, 
+          credit: balanceData.credit,
+          creditLimit: balanceData.creditLimit,
+          creditAvailable: balanceData.creditAvailable,
+          creditPending: balanceData.creditPending
+        });
         localStorage.setItem('mercury_balance', String(balanceData.total));
-        localStorage.setItem('mercury_accounts', JSON.stringify({ checking: balanceData.checking, savings: balanceData.savings, credit: balanceData.credit }));
+        localStorage.setItem('mercury_accounts', JSON.stringify({ 
+          checking: balanceData.checking, 
+          savings: balanceData.savings, 
+          credit: balanceData.credit,
+          creditLimit: balanceData.creditLimit,
+          creditAvailable: balanceData.creditAvailable,
+          creditPending: balanceData.creditPending
+        }));
         console.log("[Mercury] Account balances saved:", balanceData);
       } catch (balanceError) {
         console.warn("Could not fetch balance:", balanceError);
@@ -884,23 +905,59 @@ const App: React.FC = () => {
                    </div>
                 </div>
 
-                {/* Mercury Credit Card Balance */}
-                <div className="bg-[#121216] border border-rose-500/20 rounded-[2rem] p-8 shadow-2xl relative overflow-hidden group">
+                {/* Mercury Credit Card Balance - styled like Mercury */}
+                <div className="bg-[#121216] border border-indigo-500/20 rounded-[2rem] p-8 shadow-2xl relative overflow-hidden group">
                    <div className="relative z-10 space-y-4">
                       <div className="flex justify-between items-start">
-                        <div className="p-3 bg-rose-600 rounded-2xl text-white shadow-xl shadow-rose-600/20 group-hover:rotate-12 transition-transform">
-                          <CreditCard size={24} />
+                        <div className="flex items-center gap-3">
+                          <div className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Credit Card</div>
                         </div>
-                        <span className="text-[8px] font-black text-rose-400 border border-rose-400/20 px-2 py-1 rounded-full uppercase tracking-widest">Credit Card</span>
+                        <div className="p-2 bg-indigo-600/20 rounded-xl">
+                          <CreditCard size={18} className="text-indigo-400" />
+                        </div>
                       </div>
                       <div>
-                        <div className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mb-1">Credit Card Balance</div>
-                        <div className="text-3xl font-black text-rose-400">${accountBalances.credit.toLocaleString()}</div>
+                        <div className="text-3xl font-black text-white">
+                          ${Math.floor(accountBalances.credit).toLocaleString()}
+                          <span className="text-lg text-slate-500">.{((accountBalances.credit % 1) * 100).toFixed(0).padStart(2, '0')}</span>
+                        </div>
                       </div>
-                      <div className="pt-4 border-t border-white/5">
-                         <div className="text-[9px] font-bold text-slate-500">
-                           {accountBalances.credit > 0 ? 'Amount Owed' : 'No Balance'}
-                         </div>
+                      
+                      {/* Credit usage bar */}
+                      <div className="space-y-2">
+                        <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
+                          <div 
+                            className="h-full bg-gradient-to-r from-indigo-500 to-indigo-400 rounded-full transition-all duration-500"
+                            style={{ width: `${accountBalances.creditLimit > 0 ? Math.min((accountBalances.credit / accountBalances.creditLimit) * 100, 100) : 0}%` }}
+                          ></div>
+                        </div>
+                        <div className="flex justify-between text-[9px]">
+                          <div className="flex items-center gap-2">
+                            <span className="flex items-center gap-1">
+                              <span className="w-2 h-2 rounded-full bg-indigo-500"></span>
+                              <span className="text-slate-400">Balance</span>
+                            </span>
+                            {accountBalances.creditPending > 0 && (
+                              <span className="flex items-center gap-1">
+                                <span className="w-2 h-2 rounded-full bg-amber-500"></span>
+                                <span className="text-slate-400">Pending</span>
+                              </span>
+                            )}
+                          </div>
+                          <span className="text-emerald-400 font-bold">
+                            ${accountBalances.creditAvailable.toLocaleString()} available
+                          </span>
+                        </div>
+                      </div>
+                      
+                      <div className="pt-3 border-t border-white/5 flex justify-between items-center">
+                        <div className="flex items-center gap-2 text-[9px] text-slate-500">
+                          <RefreshCcw size={12} />
+                          <span>Autopay</span>
+                        </div>
+                        <button className="text-[10px] font-bold text-indigo-400 bg-indigo-500/10 px-3 py-1.5 rounded-lg hover:bg-indigo-500/20 transition-all">
+                          Pay
+                        </button>
                       </div>
                    </div>
                 </div>
