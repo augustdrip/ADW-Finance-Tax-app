@@ -1,9 +1,11 @@
 
 import { Transaction } from "../types";
 
-// Uses Vite proxy in development to bypass CORS
-// The /api/mercury route is proxied to https://api.mercury.com/api/v1 by vite.config.ts
-const MERCURY_API_BASE = "/api/mercury";
+// In production, use the Render proxy (has static IP for Mercury whitelist)
+// In development, use Vite's built-in proxy
+const MERCURY_API_BASE = typeof window !== 'undefined' && window.location.hostname !== 'localhost' 
+  ? "https://mercury-proxy.onrender.com/api/mercury"  // Production: Render proxy
+  : "/api/mercury";  // Development: Vite proxy
 
 // Mercury API key can be set in .env.local as MERCURY_API_KEY
 // Or passed directly to the functions
