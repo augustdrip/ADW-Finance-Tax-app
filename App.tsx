@@ -271,9 +271,9 @@ const App: React.FC = () => {
   }, [transactions, currentMonth, activeTab]);
 
   const [bankBalance, setBankBalance] = useState<number>(parseFloat(localStorage.getItem('mercury_balance') || '0'));
-  const [accountBalances, setAccountBalances] = useState<{ checking: number; savings: number }>(() => {
+  const [accountBalances, setAccountBalances] = useState<{ checking: number; savings: number; credit: number }>(() => {
     const saved = localStorage.getItem('mercury_accounts');
-    return saved ? JSON.parse(saved) : { checking: 0, savings: 0 };
+    return saved ? JSON.parse(saved) : { checking: 0, savings: 0, credit: 0 };
   });
 
   const stats: DashboardStats = useMemo(() => {
@@ -383,7 +383,7 @@ const App: React.FC = () => {
       localStorage.removeItem('mercury_accounts');
       setLastSyncTime('Never');
       setBankBalance(0);
-      setAccountBalances({ checking: 0, savings: 0 });
+      setAccountBalances({ checking: 0, savings: 0, credit: 0 });
       setMercuryKeyError(null);
     } catch (e) {
       console.warn('Failed to reset Mercury sync state:', e);
@@ -429,9 +429,9 @@ const App: React.FC = () => {
         const balanceData = await mercuryService.fetchAccountBalances(keyToUse);
         // Mercury returns balance in dollars (not cents)
         setBankBalance(balanceData.total);
-        setAccountBalances({ checking: balanceData.checking, savings: balanceData.savings });
+        setAccountBalances({ checking: balanceData.checking, savings: balanceData.savings, credit: balanceData.credit });
         localStorage.setItem('mercury_balance', String(balanceData.total));
-        localStorage.setItem('mercury_accounts', JSON.stringify({ checking: balanceData.checking, savings: balanceData.savings }));
+        localStorage.setItem('mercury_accounts', JSON.stringify({ checking: balanceData.checking, savings: balanceData.savings, credit: balanceData.credit }));
         console.log("[Mercury] Account balances saved:", balanceData);
       } catch (balanceError) {
         console.warn("Could not fetch balance:", balanceError);
@@ -880,6 +880,29 @@ const App: React.FC = () => {
                       </div>
                    </div>
                 </div>
+
+                {/* Mercury Credit Card Balance */}
+                {accountBalances.credit > 0 && (
+                <div className="bg-[#121216] border border-rose-500/20 rounded-[2rem] p-8 shadow-2xl relative overflow-hidden group">
+                   <div className="relative z-10 space-y-4">
+                      <div className="flex justify-between items-start">
+                        <div className="p-3 bg-rose-600 rounded-2xl text-white shadow-xl shadow-rose-600/20 group-hover:rotate-12 transition-transform">
+                          <CreditCard size={24} />
+                        </div>
+                        <span className="text-[8px] font-black text-rose-400 border border-rose-400/20 px-2 py-1 rounded-full uppercase tracking-widest">Credit</span>
+                      </div>
+                      <div>
+                        <div className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mb-1">Credit Card Balance</div>
+                        <div className="text-3xl font-black text-rose-400">${accountBalances.credit.toLocaleString()}</div>
+                      </div>
+                      <div className="pt-4 border-t border-white/5">
+                         <div className="text-[9px] font-bold text-slate-500">
+                           Amount Owed
+                         </div>
+                      </div>
+                   </div>
+                </div>
+                )}
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">

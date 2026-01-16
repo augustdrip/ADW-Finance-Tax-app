@@ -1,11 +1,9 @@
 
 import { Transaction } from "../types";
 
-// In production, use the Render proxy (has static IP for Mercury whitelist)
-// In development, use Vite's built-in proxy
-const MERCURY_API_BASE = typeof window !== 'undefined' && window.location.hostname !== 'localhost' 
-  ? "https://mercury-proxy.onrender.com/api/mercury"  // Production: Render proxy
-  : "/api/mercury";  // Development: Vite proxy
+// Always use the Render proxy (has static IP for Mercury whitelist)
+// This works both in production AND locally without needing to whitelist your home IP
+const MERCURY_API_BASE = "https://mercury-proxy.onrender.com/api/mercury";
 
 // Mercury API key can be set in .env.local as MERCURY_API_KEY
 // Or passed directly to the functions
@@ -226,10 +224,10 @@ export const mercuryService = {
   },
 
   /**
-   * Fetches account balances by type (checking, savings)
+   * Fetches account balances by type (checking, savings, credit)
    * @param apiKey - Optional. If not provided, uses MERCURY_API_KEY from .env.local
    */
-  async fetchAccountBalances(apiKey?: string): Promise<{ total: number; checking: number; savings: number; accounts: Array<{ name: string; type: string; balance: number }> }> {
+  async fetchAccountBalances(apiKey?: string): Promise<{ total: number; checking: number; savings: number; credit: number; accounts: Array<{ name: string; type: string; balance: number }> }> {
     const key = apiKey || ENV_MERCURY_KEY;
     const accounts = await this.fetchAccounts(key);
     console.log("[Mercury] All accounts:", accounts.map(a => ({ 
@@ -241,14 +239,21 @@ export const mercuryService = {
     
     let checking = 0;
     let savings = 0;
+    let credit = 0;
     const accountDetails: Array<{ name: string; type: string; balance: number }> = [];
     
     accounts.forEach(acc => {
-      const balance = acc.availableBalance || 0;
+      const balance = acc.availableBalance || acc.currentBalance || 0;
       accountDetails.push({ name: acc.name, type: acc.type, balance });
       
-      // Mercury account types: checking, savings, etc.
-      if (acc.type?.toLowerCase().includes('saving') || acc.name?.toLowerCase().includes('saving')) {
+      // Mercury account types: checking, savings, credit, etc.
+      const typeLower = (acc.type || '').toLowerCase();
+      const nameLower = (acc.name || '').toLowerCase();
+      
+      if (typeLower.includes('credit') || nameLower.includes('credit')) {
+        // Credit card balances are typically negative (amount owed)
+        credit += Math.abs(balance);
+      } else if (typeLower.includes('saving') || nameLower.includes('saving')) {
         savings += balance;
       } else {
         // Default to checking for operating/checking accounts
@@ -257,9 +262,9 @@ export const mercuryService = {
     });
     
     const total = checking + savings;
-    console.log("[Mercury] Checking:", checking, "Savings:", savings, "Total:", total);
+    console.log("[Mercury] Checking:", checking, "Savings:", savings, "Credit:", credit, "Total:", total);
     
-    return { total, checking, savings, accounts: accountDetails };
+    return { total, checking, savings, credit, accounts: accountDetails };
   },
 
   /**
