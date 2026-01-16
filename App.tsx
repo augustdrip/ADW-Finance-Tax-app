@@ -1324,28 +1324,13 @@ const App: React.FC = () => {
                           <td className="px-6 py-5 font-bold text-white">{t.vendor}</td>
                           <td className="px-6 py-5 font-mono">${t.amount.toLocaleString()}</td>
                           <td className="px-6 py-5">
-                            <select
-                              value={t.madeBy || ''}
-                              onChange={(e) => {
-                                const newMadeBy = e.target.value;
-                                setTransactions(prev => {
-                                  const updated = prev.map(tx => 
-                                    tx.id === t.id ? { ...tx, madeBy: newMadeBy || undefined } : tx
-                                  );
-                                  // Save to localStorage
-                                  const mercuryTransactions = updated.filter(tx => tx.bankVerified || tx.bankId);
-                                  localStorage.setItem('mercury_transactions', JSON.stringify(mercuryTransactions));
-                                  localStorage.setItem('transactions', JSON.stringify(updated));
-                                  return updated;
-                                });
-                              }}
-                              className="bg-[#09090A] border border-white/10 rounded-lg py-1 px-2 text-xs text-white focus:border-indigo-500 outline-none cursor-pointer"
-                            >
-                              <option value="">--</option>
-                              {TEAM_MEMBERS.map(member => (
-                                <option key={member} value={member}>{member}</option>
-                              ))}
-                            </select>
+                            {t.madeBy ? (
+                              <span className="text-xs font-bold text-indigo-400 bg-indigo-500/10 px-2 py-1 rounded-lg">
+                                {t.madeBy}
+                              </span>
+                            ) : (
+                              <span className="text-xs text-slate-600">--</span>
+                            )}
                           </td>
                           <td className="px-6 py-5 text-center">
                              {t.bankVerified ? (

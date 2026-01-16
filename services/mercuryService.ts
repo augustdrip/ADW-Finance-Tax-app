@@ -44,6 +44,12 @@ interface MercuryTransaction {
   externalMemo: string | null;
   bankDescription: string | null;
   kind: string;
+  // Fields for who made the transaction
+  creatorId?: string;
+  creatorName?: string;
+  cardholderName?: string;
+  initiatedByName?: string;
+  dashboardLink?: string;
 }
 
 /**
@@ -280,17 +286,36 @@ export const mercuryService = {
    * Maps Mercury API response to our internal Transaction type
    */
   mapMercuryToInternal(mercuryData: MercuryTransaction[]): Transaction[] {
-    return mercuryData.map(item => ({
-      id: item.id,
-      date: item.postedAt ? item.postedAt.split('T')[0] : item.createdAt.split('T')[0],
-      vendor: item.counterpartyName || "Unknown Vendor",
-      amount: Math.abs(item.amount), // Mercury returns amounts in dollars
-      category: this.guessCategory(item.bankDescription || '', item.counterpartyName || ''),
-      context: `Mercury: ${item.note || item.externalMemo || item.bankDescription || 'Bank transfer'}`,
-      attachments: [],
-      bankVerified: true,
-      bankId: item.id
-    }));
+    // Log first transaction to see all available fields from Mercury
+    if (mercuryData.length > 0) {
+      console.log("[Mercury] Sample transaction fields:", Object.keys(mercuryData[0]));
+      console.log("[Mercury] Sample transaction data:", JSON.stringify(mercuryData[0], null, 2));
+    }
+    
+    return mercuryData.map(item => {
+      // Extract "made by" name from Mercury - check various possible field names
+      const madeBy = (item as any).creatorName 
+        || (item as any).cardholderName 
+        || (item as any).initiatedByName
+        || (item as any).createdByName
+        || (item as any).userName
+        || (item as any).cardHolder
+        || (item as any).initiatedBy
+        || undefined;
+      
+      return {
+        id: item.id,
+        date: item.postedAt ? item.postedAt.split('T')[0] : item.createdAt.split('T')[0],
+        vendor: item.counterpartyName || "Unknown Vendor",
+        amount: Math.abs(item.amount), // Mercury returns amounts in dollars
+        category: this.guessCategory(item.bankDescription || '', item.counterpartyName || ''),
+        context: `Mercury: ${item.note || item.externalMemo || item.bankDescription || 'Bank transfer'}`,
+        attachments: [],
+        bankVerified: true,
+        bankId: item.id,
+        madeBy: madeBy
+      };
+    });
   },
 
   /**
