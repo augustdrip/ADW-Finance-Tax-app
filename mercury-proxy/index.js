@@ -72,6 +72,31 @@ app.get('/api/mercury/accounts', async (req, res) => {
   }
 });
 
+// Proxy: GET /api/mercury/credit-cards
+app.get('/api/mercury/credit-cards', async (req, res) => {
+  if (!MERCURY_API_KEY) {
+    return res.status(500).json({ error: 'MERCURY_API_KEY not configured on server' });
+  }
+  
+  try {
+    console.log('[Proxy] Fetching credit cards...');
+    const response = await fetch('https://api.mercury.com/api/v1/credit-cards', {
+      headers: {
+        'Authorization': `Bearer ${MERCURY_API_KEY}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    const data = await response.json();
+    console.log('[Proxy] Credit cards response status:', response.status);
+    console.log('[Proxy] Credit cards data:', JSON.stringify(data, null, 2));
+    res.status(response.status).json(data);
+  } catch (error) {
+    console.error('[Proxy] Error fetching credit cards:', error);
+    res.status(500).json({ error: 'Proxy error', message: error.message });
+  }
+});
+
 // Proxy: GET /api/mercury/account/:accountId/transactions
 app.get('/api/mercury/account/:accountId/transactions', async (req, res) => {
   if (!MERCURY_API_KEY) {

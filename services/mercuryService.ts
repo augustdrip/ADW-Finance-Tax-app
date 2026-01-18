@@ -34,6 +34,22 @@ interface MercuryAccount {
 }
 
 /**
+ * Interface for Mercury's Credit Card format
+ */
+interface MercuryCreditCard {
+  id: string;
+  name?: string;
+  status: string;
+  currentBalance: number;
+  availableCredit: number;
+  creditLimit: number;
+  pendingBalance?: number;
+  statementBalance?: number;
+  minimumPayment?: number;
+  paymentDueDate?: string;
+}
+
+/**
  * Interface for Mercury's API Transaction format
  */
 interface MercuryTransaction {
@@ -97,6 +113,44 @@ export const mercuryService = {
 
     const data = await response.json();
     return data.accounts || [];
+  },
+
+  /**
+   * Fetches credit cards from Mercury (separate endpoint from accounts)
+   */
+  async fetchCreditCards(apiKey: string): Promise<MercuryCreditCard[]> {
+    const apiKeyStr = typeof apiKey === 'string' ? apiKey : String((apiKey as any) ?? '');
+    if (!apiKeyStr || apiKeyStr === 'undefined' || apiKeyStr === 'null') {
+      return []; // Return empty instead of throwing - credit cards are optional
+    }
+
+    console.log("[Mercury] Fetching credit cards...");
+    
+    try {
+      const response = await fetch(`${MERCURY_API_BASE}/credit-cards`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${apiKeyStr}`,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        }
+      });
+
+      console.log("[Mercury] Credit cards response status:", response.status);
+
+      if (!response.ok) {
+        // Credit card endpoint might not exist or user might not have a credit card
+        console.log("[Mercury] Credit cards endpoint returned:", response.status);
+        return [];
+      }
+
+      const data = await response.json();
+      console.log("[Mercury] Credit cards raw response:", JSON.stringify(data, null, 2));
+      return data.creditCards || data.cards || data || [];
+    } catch (error) {
+      console.log("[Mercury] Credit cards fetch error (may not be available):", error);
+      return [];
+    }
   },
 
   /**
@@ -247,8 +301,15 @@ export const mercuryService = {
     accounts: Array<{ name: string; type: string; balance: number }> 
   }> {
     const key = apiKey || ENV_MERCURY_KEY;
-    const accounts = await this.fetchAccounts(key);
+    
+    // Fetch both accounts AND credit cards
+    const [accounts, creditCards] = await Promise.all([
+      this.fetchAccounts(key),
+      this.fetchCreditCards(key)
+    ]);
+    
     console.log("[Mercury] All accounts (raw):", JSON.stringify(accounts, null, 2));
+    console.log("[Mercury] All credit cards (raw):", JSON.stringify(creditCards, null, 2));
     
     let checking = 0;
     let savings = 0;
@@ -312,8 +373,35 @@ export const mercuryService = {
       }
     });
     
+    // Process credit cards from separate endpoint (if any)
+    if (creditCards && creditCards.length > 0) {
+      console.log("[Mercury] Processing", creditCards.length, "credit card(s) from dedicated endpoint");
+      creditCards.forEach((card: any) => {
+        console.log("[Mercury] Credit card from endpoint:", {
+          name: card.name,
+          currentBalance: card.currentBalance,
+          availableCredit: card.availableCredit,
+          creditLimit: card.creditLimit,
+          allFields: Object.keys(card)
+        });
+        
+        // Mercury credit card fields
+        credit = Math.abs(card.currentBalance || card.balance || 0);
+        creditAvailable = Math.abs(card.availableCredit || card.availableBalance || 0);
+        creditLimit = card.creditLimit || card.limit || (credit + creditAvailable);
+        creditPending = card.pendingBalance || card.pending || 0;
+        
+        accountDetails.push({ 
+          name: card.name || 'Mercury Credit Card', 
+          type: 'credit_card', 
+          balance: credit 
+        });
+      });
+      console.log("[Mercury] ✅ Credit card from dedicated endpoint:", { credit, creditAvailable, creditLimit, creditPending });
+    }
+    
     const total = checking + savings;
-    console.log("[Mercury] Checking:", checking, "Savings:", savings, "Credit:", credit, "CreditAvailable:", creditAvailable, "Total:", total);
+    console.log("[Mercury] Final: Checking:", checking, "Savings:", savings, "Credit:", credit, "CreditAvailable:", creditAvailable, "Total:", total);
     
     return { total, checking, savings, credit, creditLimit, creditAvailable, creditPending, accounts: accountDetails };
   },
