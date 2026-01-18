@@ -261,24 +261,54 @@ export const mercuryService = {
     accounts.forEach(acc => {
       const balance = acc.currentBalance || acc.availableBalance || 0;
       const available = acc.availableBalance || 0;
+      
+      // Log each account for debugging
+      console.log("[Mercury] Account:", {
+        name: acc.name,
+        type: acc.type,
+        currentBalance: acc.currentBalance,
+        availableBalance: acc.availableBalance,
+        allFields: Object.keys(acc)
+      });
+      
       accountDetails.push({ name: acc.name, type: acc.type, balance });
       
-      // Mercury account types: checking, savings, credit, etc.
+      // Mercury account types - check multiple possible identifiers
       const typeLower = (acc.type || '').toLowerCase();
       const nameLower = (acc.name || '').toLowerCase();
       
-      if (typeLower.includes('credit') || nameLower.includes('credit')) {
+      // Check for credit card - Mercury might use various naming
+      const isCreditCard = 
+        typeLower.includes('credit') || 
+        typeLower.includes('card') ||
+        typeLower === 'creditcard' ||
+        typeLower === 'credit_card' ||
+        nameLower.includes('credit') || 
+        nameLower.includes('card') ||
+        nameLower.includes('io') || // Mercury IO card
+        nameLower.includes('mercury card');
+      
+      if (isCreditCard) {
         // Credit card: currentBalance is amount owed, availableBalance is remaining credit
         credit = Math.abs(balance);
-        creditAvailable = available;
-        creditLimit = (acc as any).creditLimit || credit + available; // If no explicit limit, estimate from balance + available
-        creditPending = (acc as any).pendingBalance || 0;
-        console.log("[Mercury] Credit card found:", { credit, creditAvailable, creditLimit, creditPending });
-      } else if (typeLower.includes('saving') || nameLower.includes('saving')) {
+        creditAvailable = Math.abs(available);
+        creditLimit = (acc as any).creditLimit || (acc as any).limit || credit + creditAvailable;
+        creditPending = (acc as any).pendingBalance || (acc as any).pending || 0;
+        console.log("[Mercury] ✅ Credit card FOUND:", { 
+          name: acc.name, 
+          type: acc.type,
+          credit, 
+          creditAvailable, 
+          creditLimit, 
+          creditPending 
+        });
+      } else if (typeLower.includes('saving') || nameLower.includes('saving') || nameLower.includes('reserve')) {
         savings += balance;
+        console.log("[Mercury] Savings account:", acc.name, balance);
       } else {
         // Default to checking for operating/checking accounts
         checking += balance;
+        console.log("[Mercury] Checking account:", acc.name, balance);
       }
     });
     
