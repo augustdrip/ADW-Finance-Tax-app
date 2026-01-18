@@ -921,48 +921,61 @@ const App: React.FC = () => {
                           <CreditCard size={18} className="text-indigo-400" />
                         </div>
                       </div>
-                      <div>
-                        <div className="text-3xl font-black text-white">
-                          ${Math.floor(accountBalances.credit).toLocaleString()}
-                          <span className="text-lg text-slate-500">.{((accountBalances.credit % 1) * 100).toFixed(0).padStart(2, '0')}</span>
-                        </div>
-                      </div>
                       
-                      {/* Credit usage bar */}
-                      <div className="space-y-2">
-                        <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
-                          <div 
-                            className="h-full bg-gradient-to-r from-indigo-500 to-indigo-400 rounded-full transition-all duration-500"
-                            style={{ width: `${accountBalances.creditLimit > 0 ? Math.min((accountBalances.credit / accountBalances.creditLimit) * 100, 100) : 0}%` }}
-                          ></div>
-                        </div>
-                        <div className="flex justify-between text-[9px]">
-                          <div className="flex items-center gap-2">
-                            <span className="flex items-center gap-1">
-                              <span className="w-2 h-2 rounded-full bg-indigo-500"></span>
-                              <span className="text-slate-400">Balance</span>
-                            </span>
-                            {accountBalances.creditPending > 0 && (
-                              <span className="flex items-center gap-1">
-                                <span className="w-2 h-2 rounded-full bg-amber-500"></span>
-                                <span className="text-slate-400">Pending</span>
-                              </span>
-                            )}
+                      {accountBalances.credit > 0 || accountBalances.creditAvailable > 0 ? (
+                        <>
+                          <div>
+                            <div className="text-3xl font-black text-white">
+                              ${Math.floor(accountBalances.credit).toLocaleString()}
+                              <span className="text-lg text-slate-500">.{((accountBalances.credit % 1) * 100).toFixed(0).padStart(2, '0')}</span>
+                            </div>
                           </div>
-                          <span className="text-emerald-400 font-bold">
-                            ${accountBalances.creditAvailable.toLocaleString()} available
-                          </span>
+                          
+                          {/* Credit usage bar */}
+                          <div className="space-y-2">
+                            <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
+                              <div 
+                                className="h-full bg-gradient-to-r from-indigo-500 to-indigo-400 rounded-full transition-all duration-500"
+                                style={{ width: `${accountBalances.creditLimit > 0 ? Math.min((accountBalances.credit / accountBalances.creditLimit) * 100, 100) : 0}%` }}
+                              ></div>
+                            </div>
+                            <div className="flex justify-between text-[9px]">
+                              <div className="flex items-center gap-2">
+                                <span className="flex items-center gap-1">
+                                  <span className="w-2 h-2 rounded-full bg-indigo-500"></span>
+                                  <span className="text-slate-400">Balance</span>
+                                </span>
+                                {accountBalances.creditPending > 0 && (
+                                  <span className="flex items-center gap-1">
+                                    <span className="w-2 h-2 rounded-full bg-amber-500"></span>
+                                    <span className="text-slate-400">Pending</span>
+                                  </span>
+                                )}
+                              </div>
+                              <span className="text-emerald-400 font-bold">
+                                ${accountBalances.creditAvailable.toLocaleString()} available
+                              </span>
+                            </div>
+                          </div>
+                        </>
+                      ) : (
+                        <div className="text-center py-4">
+                          <div className="text-2xl font-black text-slate-600">$0.00</div>
+                          <div className="text-[10px] text-slate-500 mt-2">
+                            No credit card balance found.<br/>
+                            Sync Mercury to load credit card data.
+                          </div>
                         </div>
-                      </div>
+                      )}
                       
                       <div className="pt-3 border-t border-white/5 flex justify-between items-center">
                         <div className="flex items-center gap-2 text-[9px] text-slate-500">
-                          <RefreshCcw size={12} />
-                          <span>Autopay</span>
+                          <CreditCard size={12} />
+                          <span>Mercury Credit Card</span>
                         </div>
-                        <button className="text-[10px] font-bold text-indigo-400 bg-indigo-500/10 px-3 py-1.5 rounded-lg hover:bg-indigo-500/20 transition-all">
-                          Pay
-                        </button>
+                        <span className="text-[9px] text-slate-500">
+                          {lastSyncTime !== 'Never' ? `Last sync: ${lastSyncTime}` : 'Not synced'}
+                        </span>
                       </div>
                    </div>
                 </div>
