@@ -1,0 +1,99 @@
+// Prisma schema for ADW Finance/Tax App
+// Database: PostgreSQL (use Neon, Supabase, or PlanetScale)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Transactions / Expenses
+model Transaction {
+  id            String   @id @default(cuid())
+  date          String
+  vendor        String
+  amount        Float
+  category      String
+  context       String?
+  attachments   String[] // Array of attachment URLs
+  bankVerified  Boolean  @default(false)
+  bankId        String?  // Mercury transaction ID
+  madeBy        String?  // Who made this expense
+  receipts      String[] // Array of receipt URLs/base64
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+// Service Agreements / Contracts
+model Agreement {
+  id             String   @id @default(cuid())
+  clientName     String
+  scopeOfWork    String
+  value          Float
+  status         String   @default("active") // active, completed, terminated
+  effectiveDate  String
+  expirationDate String?
+  notes          String?
+  attachments    String[] // PDF attachments
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+// Invoices
+model Invoice {
+  id            String   @id @default(cuid())
+  invoiceNumber String
+  clientName    String
+  amount        Float
+  status        String   @default("pending") // pending, paid, overdue
+  dueDate       String
+  items         Json?    // Line items as JSON
+  notes         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+// Asset Vault
+model Asset {
+  id        String   @id @default(cuid())
+  name      String
+  type      String   // MIME type
+  url       String   // File URL or base64
+  category  String   // Branding, Legal, Financial, etc.
+  dateAdded String
+  size      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// AI Chat History
+model ChatMessage {
+  id        String   @id @default(cuid())
+  role      String   // user, assistant
+  content   String
+  timestamp DateTime @default(now())
+}
+
+// Monthly AI Summaries
+model MonthlySummary {
+  id        String   @id @default(cuid())
+  month     String   // e.g., "2024-01"
+  summary   String   @db.Text
+  createdAt DateTime @default(now())
+}
+
+// Mercury Sync State
+model MercurySyncState {
+  id           String   @id @default("mercury_sync")
+  lastSyncTime DateTime?
+  totalBalance Float    @default(0)
+  checking     Float    @default(0)
+  savings      Float    @default(0)
+  credit       Float    @default(0)
+  creditLimit  Float    @default(0)
+  creditAvailable Float @default(0)
+  updatedAt    DateTime @updatedAt
+}
