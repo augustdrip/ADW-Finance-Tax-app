@@ -96,7 +96,7 @@ const MOCK_DATA = {
     { id: 'i2', invoiceNumber: 'INV-2024-002', clientName: 'Astra AI', issueDate: '2024-05-10', dueDate: '2024-06-10', amount: 8500, description: 'R&D Consultation Fees', status: 'Sent' }
   ],
   assets: [
-    { id: 'as1', name: 'AgencyDevWorks_Logo_Primary.svg', type: 'image/svg+xml', url: 'https://placeholder.com/150', category: 'Branding', dateAdded: '2024-01-10', size: '12KB' },
+    { id: 'as1', name: 'Agency_Dev_Works_Logo.svg', type: 'image/svg+xml', url: 'data:image/svg+xml;base64,PHN2ZyB2aWV3Qm94PSIwIDAgMTAwIDEwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48Y2lyY2xlIGN4PSI1MCIgY3k9IjUwIiByPSI0NiIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjOTMzM0VBIiBzdHJva2Utd2lkdGg9IjUiLz48Y2lyY2xlIGN4PSI1MCIgY3k9IjUwIiByPSIzNiIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjOTMzM0VBIiBzdHJva2Utd2lkdGg9IjQiLz48cGF0aCBkPSJNMzggMTggTDM4IDMyIEw0NCAzMiBMNDQgMTggWiIgZmlsbD0iIzkzMzNFQSIvPjxwYXRoIGQ9Ik01NiAxOCBMNTYgMzIgTDYyIDMyIEw2MiAxOCBaIiBmaWxsPSIjOTMzM0VBIi8+PHBhdGggZD0iTTM4IDMyIEw1MCA1MCBMNTYgNTAgTDQ0IDMyIFoiIGZpbGw9IiM5MzMzRUEiLz48cGF0aCBkPSJNNjIgMzIgTDUwIDUwIEw0NCA1MCBMNTYgMzIgWiIgZmlsbD0iIzkzMzNFQSIvPjxwYXRoIGQ9Ik0yNiA1MCBMMzYgNzggTDQyIDc4IEwzNSA1NiBaIiBmaWxsPSIjOTMzM0VBIi8+PHBhdGggZD0iTTM1IDU2IEw0MiA3OCBMNTAgNjAgTDUwIDU0IFoiIGZpbGw9IiM5MzMzRUEiLz48cGF0aCBkPSJNNTAgNTQgTDUwIDYwIEw1OCA3OCBMNjUgNTYgWiIgZmlsbD0iIzkzMzNFQSIvPjxwYXRoIGQ9Ik02NSA1NiBMNTggNzggTDY0IDc4IEw3NCA1MCBaIiBmaWxsPSIjOTMzM0VBIi8+PC9zdmc+', category: 'Branding', dateAdded: '2024-01-10', size: '2KB' },
     { id: 'as2', name: 'AgencyDevWorks_BrandGuide.pdf', type: 'application/pdf', url: '#', category: 'Branding', dateAdded: '2024-01-15', size: '4.2MB' }
   ]
 };
@@ -751,15 +751,32 @@ const App: React.FC = () => {
   const Logo = () => (
     <div className="flex items-center gap-3">
       <div className="relative w-10 h-10 flex items-center justify-center">
+        {/* Agency Dev Works Logo */}
         <svg viewBox="0 0 100 100" className="absolute inset-0 w-full h-full drop-shadow-lg">
-          <defs>
-            <linearGradient id="logo-grad" x1="0%" y1="0%" x2="100%" y2="100%">
-              <stop offset="0%" stopColor="#6366f1" />
-              <stop offset="100%" stopColor="#a855f7" />
-            </linearGradient>
-          </defs>
-          <path d="M50 5 L90 25 L90 75 L50 95 L10 75 L10 25 Z" fill="url(#logo-grad)"/>
-          <text x="50" y="62" textAnchor="middle" fill="white" fontSize="32" fontWeight="900">A</text>
+          {/* Outer circle */}
+          <circle cx="50" cy="50" r="46" fill="none" stroke="#9333EA" strokeWidth="5"/>
+          {/* Inner circle */}
+          <circle cx="50" cy="50" r="36" fill="none" stroke="#9333EA" strokeWidth="4"/>
+          
+          {/* A shape - upper chevron with vertical lines */}
+          {/* Left vertical line of A */}
+          <path d="M38 18 L38 32 L44 32 L44 18 Z" fill="#9333EA"/>
+          {/* Right vertical line of A */}
+          <path d="M56 18 L56 32 L62 32 L62 18 Z" fill="#9333EA"/>
+          {/* Left diagonal of A */}
+          <path d="M38 32 L50 50 L56 50 L44 32 Z" fill="#9333EA"/>
+          {/* Right diagonal of A */}
+          <path d="M62 32 L50 50 L44 50 L56 32 Z" fill="#9333EA"/>
+          
+          {/* W shape - connecting to bottom circle */}
+          {/* Left leg of W */}
+          <path d="M26 50 L36 78 L42 78 L35 56 Z" fill="#9333EA"/>
+          {/* Left-center of W */}
+          <path d="M35 56 L42 78 L50 60 L50 54 Z" fill="#9333EA"/>
+          {/* Right-center of W */}
+          <path d="M50 54 L50 60 L58 78 L65 56 Z" fill="#9333EA"/>
+          {/* Right leg of W */}
+          <path d="M65 56 L58 78 L64 78 L74 50 Z" fill="#9333EA"/>
         </svg>
       </div>
       {isSidebarOpen && (
