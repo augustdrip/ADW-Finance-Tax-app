@@ -1,7 +1,14 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
 import { Transaction, TaxAnalysis } from "../types";
-import { IRC_KNOWLEDGE_BASE, formatIRCForAI, findIRCSections } from "../data/ircKnowledgeBase";
+import { 
+  IRC_KNOWLEDGE_BASE, 
+  formatIRCForAI, 
+  findIRCSections, 
+  analyzeTransactionIRC,
+  getCurrentYearLimits,
+  TAX_LIMITS_COMPARISON
+} from "../data/ircKnowledgeBase";
 
 // Always initialize GoogleGenAI with a named parameter using process.env.API_KEY directly.
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
@@ -82,8 +89,46 @@ const ANALYSIS_SCHEMA = {
 };
 
 export const analyzeTransaction = async (transaction: Transaction): Promise<TaxAnalysis> => {
-  const prompt = `Analyze this purchase for Agency Dev Works: Vendor: ${transaction.vendor}, Amount: $${transaction.amount}, Context: ${transaction.context}. 
-  Examine potential under IRC § 162, § 179, and § 41. Identify the maximum legal tax breakthrough.`;
+  // First, get IRC analysis from our knowledge base
+  const ircAnalysis = analyzeTransactionIRC(
+    transaction.vendor,
+    transaction.category,
+    transaction.amount,
+    transaction.context
+  );
+  
+  // Get relevant IRC sections text for the AI
+  const relevantIRCText = ircAnalysis.relevantSections
+    .map(s => `${s.section}: ${s.title} - ${s.summary}`)
+    .join('\n');
+  
+  const currentLimits = getCurrentYearLimits('2025');
+  
+  const prompt = `Analyze this purchase for Agency Dev Works:
+  
+TRANSACTION DETAILS:
+- Vendor: ${transaction.vendor}
+- Amount: $${transaction.amount.toLocaleString()}
+- Category: ${transaction.category}
+- Context: ${transaction.context || 'No context provided'}
+
+RELEVANT IRC SECTIONS FROM KNOWLEDGE BASE:
+${relevantIRCText}
+
+SUGGESTED SCHEDULE C LINE: ${ircAnalysis.scheduleCLine || 'TBD'}
+
+2025 TAX LIMITS:
+- §179 Max: $${currentLimits.section179_max.toLocaleString()}
+- Standard Mileage: ${currentLimits.standardMileage}/mile
+- Meals: 50% deductible
+- Bonus Depreciation: ${currentLimits.bonusDepreciation}
+
+INSTRUCTIONS:
+1. Identify the maximum legal deduction under the relevant IRC sections
+2. Provide specific IRC citations (e.g., "IRC §162(a)(1)")
+3. Recommend compliance/documentation steps
+4. Assess audit risk level
+5. Suggest tax optimization strategies`;
   
   try {
     const response = await ai.models.generateContent({
@@ -96,22 +141,56 @@ export const analyzeTransaction = async (transaction: Transaction): Promise<TaxA
       },
     });
     const result = JSON.parse(response.text || '{}');
-    // Map response to TaxAnalysis format
+    
+    // Merge AI analysis with our IRC knowledge base analysis
+    const citedSections = [
+      ...(result.citedSections || []),
+      ...ircAnalysis.relevantSections.map(s => s.section)
+    ].filter((v, i, a) => a.indexOf(v) === i); // Remove duplicates
+    
     return {
       status: result.status || 'Analyzed',
       deductionPotential: result.deductionPotential || 'Medium',
-      deductibleAmount: result.deductibleAmount || 0,
-      legalBasis: result.legalBasis || '',
+      deductibleAmount: result.deductibleAmount || transaction.amount,
+      legalBasis: result.legalBasis || ircAnalysis.deductionStrategy,
       strategy: result.strategy || '',
-      actionSteps: result.actionSteps || [],
-      riskLevel: result.riskLevel || 'Moderate',
-      citedSections: result.citedSections || []
+      actionSteps: [
+        ...(result.actionSteps || []),
+        ...ircAnalysis.complianceNotes
+      ].filter((v, i, a) => a.indexOf(v) === i).slice(0, 6),
+      riskLevel: result.riskLevel || 'Low',
+      citedSections: citedSections,
+      scheduleCLine: ircAnalysis.scheduleCLine,
+      ircSections: ircAnalysis.relevantSections.map(s => ({
+        section: s.section,
+        title: s.title,
+        summary: s.summary
+      }))
     } as TaxAnalysis;
   } catch (error) {
     console.error("Analysis Error:", error);
-    throw error;
+    // Fallback to IRC knowledge base analysis only
+    return {
+      status: 'Analyzed (Offline)',
+      deductionPotential: 'Medium',
+      deductibleAmount: transaction.amount,
+      legalBasis: ircAnalysis.deductionStrategy || `Deductible under ${ircAnalysis.primarySection?.section || '§162'}`,
+      strategy: `${ircAnalysis.scheduleCLine}. Document business purpose clearly.`,
+      actionSteps: ircAnalysis.complianceNotes,
+      riskLevel: 'Low',
+      citedSections: ircAnalysis.relevantSections.map(s => s.section),
+      scheduleCLine: ircAnalysis.scheduleCLine,
+      ircSections: ircAnalysis.relevantSections.map(s => ({
+        section: s.section,
+        title: s.title,
+        summary: s.summary
+      }))
+    } as TaxAnalysis;
   }
 };
+
+// Export IRC analysis for use in UI
+export { analyzeTransactionIRC, getCurrentYearLimits, TAX_LIMITS_COMPARISON };
 
 export const enhanceBusinessContext = async (context: string, vendor: string, amount: number): Promise<string> => {
   const prompt = `Enhance the following business context for an expenditure of $${amount} to ${vendor}. 

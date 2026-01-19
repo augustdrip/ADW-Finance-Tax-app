@@ -881,7 +881,7 @@ const App: React.FC = () => {
                       </div>
                       <div className="pt-4 border-t border-white/5 flex justify-between items-center">
                          <div className="text-[9px] font-bold text-slate-500">Synced: {stats.lastSync}</div>
-                         <button onClick={handleMercurySync} disabled={isMercurySyncing} className="text-[10px] font-black text-indigo-400 uppercase hover:text-white flex items-center gap-1.5 transition-colors">
+                         <button onClick={() => handleMercurySync()} disabled={isMercurySyncing} className="text-[10px] font-black text-indigo-400 uppercase hover:text-white flex items-center gap-1.5 transition-colors">
                            {isMercurySyncing ? <Loader2 size={12} className="animate-spin" /> : <RefreshCcw size={12} />} 
                            Sync
                          </button>
@@ -1326,7 +1326,7 @@ const App: React.FC = () => {
                 </div>
                 <div className="flex items-center gap-3">
                   <button 
-                    onClick={handleMercurySync} 
+                    onClick={() => handleMercurySync()} 
                     disabled={isMercurySyncing}
                     className="bg-[#121216] border border-indigo-500/30 text-indigo-400 hover:bg-indigo-500/10 px-5 py-2.5 rounded-xl text-xs font-black uppercase flex items-center gap-2 transition-all shadow-lg active:scale-95"
                   >

@@ -2,8 +2,10 @@
  * Internal Revenue Code (IRC) Knowledge Base
  * Comprehensive tax law reference for business operations
  * 
- * Sources: 26 U.S. Code (Cornell Law, IRS.gov)
- * Last Updated: 2024
+ * Sources: 26 U.S. Code (Cornell Law, IRS.gov, House.gov)
+ * Last Updated: January 2025
+ * 
+ * Includes 2024 AND 2025 tax year limits (inflation-adjusted)
  */
 
 export interface IRCSection {
@@ -936,8 +938,494 @@ export const IRC_KNOWLEDGE_BASE: IRCSection[] = [
     scheduleC_line: "15",
     businessRelevance: "high",
     category: "Insurance"
+  },
+
+  // ==========================================
+  // PART 12: 2025 TAX YEAR UPDATES
+  // ==========================================
+  {
+    section: "§1 (2025)",
+    title: "2025 Tax Brackets - Inflation Adjusted",
+    summary: "Federal income tax brackets for 2025 tax year, adjusted for inflation under IRC §1(f).",
+    keyPoints: [
+      "10% bracket: $0 - $11,925 (single), $0 - $23,850 (MFJ)",
+      "12% bracket: $11,926 - $48,475 (single), $23,851 - $96,950 (MFJ)",
+      "22% bracket: $48,476 - $103,350 (single), $96,951 - $206,700 (MFJ)",
+      "24% bracket: $103,351 - $197,300 (single), $206,701 - $394,600 (MFJ)",
+      "32% bracket: $197,301 - $250,500 (single), $394,601 - $501,050 (MFJ)",
+      "35% bracket: $250,501 - $626,350 (single), $501,051 - $751,600 (MFJ)",
+      "37% bracket: Over $626,350 (single), Over $751,600 (MFJ)"
+    ],
+    limits: {
+      "bracket_10_single": 11925,
+      "bracket_12_single": 48475,
+      "bracket_22_single": 103350,
+      "bracket_24_single": 197300,
+      "bracket_32_single": 250500,
+      "bracket_35_single": 626350
+    },
+    relatedForms: ["Form 1040"],
+    businessRelevance: "high",
+    category: "2025 Updates"
+  },
+  {
+    section: "§63 (2025)",
+    title: "2025 Standard Deduction",
+    summary: "Standard deduction amounts for 2025, inflation-adjusted.",
+    keyPoints: [
+      "Single: $15,000 (up from $14,600 in 2024)",
+      "Married Filing Jointly: $30,000 (up from $29,200 in 2024)",
+      "Head of Household: $22,500 (up from $21,900 in 2024)",
+      "Additional for 65+/blind: $1,550 (single), $1,550 (married)",
+      "SALT deduction still capped at $10,000"
+    ],
+    limits: {
+      "standardDeduction_single_2025": 15000,
+      "standardDeduction_mfj_2025": 30000,
+      "standardDeduction_hoh_2025": 22500,
+      "additional_65plus_single": 1550,
+      "SALT_cap": 10000
+    },
+    relatedForms: ["Form 1040"],
+    businessRelevance: "medium",
+    category: "2025 Updates"
+  },
+  {
+    section: "§179 (2025)",
+    title: "2025 Section 179 Expensing Limits",
+    summary: "Updated Section 179 limits for 2025 tax year.",
+    keyPoints: [
+      "Maximum deduction: $1,250,000 (up from $1,220,000 in 2024)",
+      "Phase-out threshold: $3,130,000 (up from $3,050,000 in 2024)",
+      "SUV limit: $30,500 (up from $28,900 in 2024)",
+      "Applies to tangible personal property and qualified software",
+      "Must be placed in service during tax year",
+      "Cannot create or increase a business loss"
+    ],
+    limits: {
+      "maxDeduction_2025": 1250000,
+      "phaseoutThreshold_2025": 3130000,
+      "SUV_limit_2025": 30500
+    },
+    relatedForms: ["Form 4562"],
+    businessRelevance: "high",
+    category: "2025 Updates"
+  },
+  {
+    section: "§401(k) (2025)",
+    title: "2025 Retirement Contribution Limits",
+    summary: "Updated retirement plan contribution limits for 2025.",
+    keyPoints: [
+      "401(k)/403(b) employee deferral: $23,500 (up from $23,000)",
+      "Catch-up contribution (50+): $7,500",
+      "NEW: Super catch-up (60-63): $11,250",
+      "Total 401(k) limit: $70,000 (up from $69,000)",
+      "SEP IRA: 25% of compensation, max $70,000",
+      "SIMPLE IRA: $16,500 (up from $16,000)",
+      "IRA contribution: $7,000 (unchanged)"
+    ],
+    limits: {
+      "401k_deferral_2025": 23500,
+      "catchUp_50plus": 7500,
+      "superCatchUp_60to63": 11250,
+      "totalLimit_2025": 70000,
+      "SEP_max_2025": 70000,
+      "SIMPLE_2025": 16500,
+      "IRA_2025": 7000
+    },
+    relatedForms: ["Form 5500-EZ", "Form 5305-SEP"],
+    businessRelevance: "high",
+    category: "2025 Updates"
+  },
+  {
+    section: "§1401 (2025)",
+    title: "2025 Self-Employment Tax",
+    summary: "Self-employment tax calculations for 2025.",
+    keyPoints: [
+      "Social Security wage base: $176,100 (up from $168,600 in 2024)",
+      "Social Security rate: 12.4%",
+      "Medicare rate: 2.9% (no limit)",
+      "Additional Medicare: 0.9% on earnings >$200K",
+      "Total SE tax: 15.3% on first $176,100, then 2.9%+ above",
+      "50% of SE tax deductible as adjustment"
+    ],
+    limits: {
+      "socialSecurity_wage_base_2025": 176100,
+      "socialSecurity_rate": "12.4%",
+      "medicare_rate": "2.9%",
+      "additionalMedicare_threshold": 200000
+    },
+    relatedForms: ["Schedule SE"],
+    businessRelevance: "high",
+    category: "2025 Updates"
+  },
+  {
+    section: "§280F (2025)",
+    title: "2025 Vehicle Depreciation Limits",
+    summary: "Luxury auto depreciation caps for 2025.",
+    keyPoints: [
+      "Year 1 (with bonus): $20,400",
+      "Year 1 (without bonus): $12,400",
+      "Year 2: $19,800",
+      "Year 3: $11,900",
+      "Year 4+: $7,160",
+      "Standard mileage rate 2025: 70 cents/mile",
+      "Heavy SUV (>6,000 lbs) §179 limit: $30,500"
+    ],
+    limits: {
+      "year1_withBonus_2025": 20400,
+      "year1_noBonus_2025": 12400,
+      "year2_2025": 19800,
+      "year3_2025": 11900,
+      "year4plus_2025": 7160,
+      "standardMileageRate_2025": 0.70
+    },
+    relatedForms: ["Form 4562"],
+    businessRelevance: "high",
+    category: "2025 Updates"
+  },
+
+  // ==========================================
+  // PART 13: ADDITIONAL BUSINESS SECTIONS
+  // ==========================================
+  {
+    section: "§83",
+    title: "Property Transferred in Connection with Services",
+    summary: "Rules for stock options, restricted stock, and equity compensation. Critical for startups and tech companies.",
+    keyPoints: [
+      "Property taxed when substantially vested",
+      "83(b) election: elect to be taxed at grant date",
+      "Must file 83(b) within 30 days of grant - NO EXTENSIONS",
+      "Restricted stock: taxed at vesting unless 83(b) elected",
+      "ISOs have separate rules under §422",
+      "NSOs taxed as ordinary income at exercise"
+    ],
+    examples: [
+      "Founder stock with vesting - file 83(b)!",
+      "Employee restricted stock units (RSUs)",
+      "Stock options to contractors"
+    ],
+    relatedForms: ["Form 3921 (ISO)", "Form 3922 (ESPP)"],
+    businessRelevance: "high",
+    category: "Equity Compensation"
+  },
+  {
+    section: "§422",
+    title: "Incentive Stock Options (ISOs)",
+    summary: "Favorable tax treatment for qualified stock options.",
+    keyPoints: [
+      "No ordinary income tax at exercise (unlike NSOs)",
+      "AMT preference item at exercise",
+      "Must hold 2+ years from grant, 1+ year from exercise",
+      "$100,000 annual limit on ISOs that vest",
+      "Must be employee (not contractor) at exercise",
+      "Gain taxed as long-term capital gain if requirements met"
+    ],
+    limits: {
+      "annualVestingLimit": 100000,
+      "holdingPeriod_fromGrant": "2 years",
+      "holdingPeriod_fromExercise": "1 year"
+    },
+    relatedForms: ["Form 3921"],
+    businessRelevance: "high",
+    category: "Equity Compensation"
+  },
+  {
+    section: "§1202",
+    title: "Qualified Small Business Stock (QSBS)",
+    summary: "Excludes up to 100% of gain from sale of qualified small business stock.",
+    keyPoints: [
+      "100% exclusion for stock acquired after 9/27/2010",
+      "Must hold for 5+ years",
+      "Corporation must be C-Corp with <$50M assets at issuance",
+      "80% of assets must be used in active business",
+      "Certain industries excluded (finance, law, accounting, etc.)",
+      "Exclusion capped at greater of $10M or 10x basis"
+    ],
+    limits: {
+      "exclusionRate": "100%",
+      "holdingPeriod": "5 years",
+      "maxAssets": 50000000,
+      "maxExclusion": 10000000
+    },
+    examples: [
+      "Tech startup founder sells shares after 5 years",
+      "Angel investor in qualified startup"
+    ],
+    relatedForms: ["Form 8949", "Schedule D"],
+    businessRelevance: "high",
+    category: "Capital Gains"
+  },
+  {
+    section: "§1244",
+    title: "Small Business Stock Loss",
+    summary: "Allows ordinary loss treatment (not capital loss) for losses on small business stock.",
+    keyPoints: [
+      "Ordinary loss up to $50,000 ($100,000 MFJ)",
+      "Corporation must have received <$1M at stock issuance",
+      "Must be original holder (not purchased from someone)",
+      "Excess over limit is capital loss",
+      "Great for founders if business fails"
+    ],
+    limits: {
+      "maxOrdinaryLoss_single": 50000,
+      "maxOrdinaryLoss_mfj": 100000,
+      "maxCapitalization": 1000000
+    },
+    relatedForms: ["Form 4797"],
+    businessRelevance: "medium",
+    category: "Capital Gains"
+  },
+  {
+    section: "§263A",
+    title: "Uniform Capitalization Rules (UNICAP)",
+    summary: "Requires capitalization of certain costs into inventory or property.",
+    keyPoints: [
+      "Small business exception: <$29M gross receipts (3-year average)",
+      "Applies to manufacturers, resellers, certain producers",
+      "Direct and indirect costs must be capitalized",
+      "Costs recovered through COGS or depreciation",
+      "Software developers may be affected"
+    ],
+    limits: {
+      "smallBusinessException_2024": 29000000
+    },
+    relatedForms: ["Form 3115 (for method changes)"],
+    businessRelevance: "medium",
+    category: "Inventory"
+  },
+  {
+    section: "§448",
+    title: "Cash Method of Accounting",
+    summary: "Rules for using cash method vs accrual method accounting.",
+    keyPoints: [
+      "Cash method allowed if <$29M gross receipts (3-year average)",
+      "Cash: income when received, expenses when paid",
+      "Accrual: income when earned, expenses when incurred",
+      "Most service businesses can use cash method",
+      "Simpler for small businesses"
+    ],
+    limits: {
+      "cashMethodLimit_2024": 29000000
+    },
+    relatedForms: ["Form 3115"],
+    businessRelevance: "medium",
+    category: "Accounting Methods"
+  },
+  {
+    section: "§461",
+    title: "Economic Performance Rules",
+    summary: "When expenses are deductible - economic performance must occur.",
+    keyPoints: [
+      "Services: when performed (not when contracted)",
+      "Property: when provided",
+      "Prepaid expenses: deductible when economic performance occurs",
+      "Exception: recurring item exception for certain accrual basis taxpayers",
+      "12-month rule for prepaid expenses"
+    ],
+    examples: [
+      "Prepaid insurance: deduct ratably over coverage period",
+      "Retainer fee: deduct as services are performed",
+      "12-month rule: prepaid expense for benefit <12 months"
+    ],
+    businessRelevance: "medium",
+    category: "Accounting Methods"
+  },
+  {
+    section: "§469",
+    title: "Passive Activity Loss Rules",
+    summary: "Limits deduction of losses from passive activities against non-passive income.",
+    keyPoints: [
+      "Passive = business without material participation",
+      "Cannot offset W-2 or active business income",
+      "Suspended losses carry forward",
+      "Released when passive activity sold",
+      "Real estate professionals exception",
+      "$25,000 rental loss allowance (phases out at $100K-$150K AGI)"
+    ],
+    limits: {
+      "rentalLossAllowance": 25000,
+      "phaseoutStart": 100000,
+      "phaseoutEnd": 150000
+    },
+    relatedForms: ["Form 8582"],
+    businessRelevance: "medium",
+    category: "Passive Activities"
+  },
+  {
+    section: "§465",
+    title: "At-Risk Rules",
+    summary: "Limits losses to the amount the taxpayer has at risk in the activity.",
+    keyPoints: [
+      "At-risk = cash invested + recourse debt",
+      "Nonrecourse debt generally not at-risk (except real estate)",
+      "Prevents deducting losses beyond economic investment",
+      "Losses exceeding at-risk amount are suspended",
+      "Applies to individuals and closely-held corps"
+    ],
+    relatedForms: ["Form 6198"],
+    businessRelevance: "low",
+    category: "Loss Limitations"
+  },
+  {
+    section: "§197",
+    title: "Amortization of Intangibles",
+    summary: "15-year amortization for goodwill and certain intangible assets acquired in business acquisition.",
+    keyPoints: [
+      "Goodwill: 15-year amortization",
+      "Customer lists: 15 years",
+      "Covenants not to compete: 15 years",
+      "Patents, copyrights: 15 years (if acquired)",
+      "Self-created intangibles: different rules",
+      "No §179 for intangibles"
+    ],
+    limits: {
+      "amortizationPeriod": "15 years"
+    },
+    relatedForms: ["Form 4562 Part VI"],
+    businessRelevance: "medium",
+    category: "Amortization"
+  },
+  {
+    section: "§351",
+    title: "Transfer to Corporation",
+    summary: "Tax-free transfer of property to corporation in exchange for stock.",
+    keyPoints: [
+      "No gain/loss recognized on transfer",
+      "Transferors must control corporation (80%+ stock)",
+      "Basis carries over to corporation",
+      "Boot received is taxable",
+      "Critical for incorporating existing businesses"
+    ],
+    examples: [
+      "Founder contributes IP for stock - no tax",
+      "Converting partnership to C-Corp",
+      "Multiple founders forming new corporation"
+    ],
+    relatedForms: ["Form 351 statement"],
+    businessRelevance: "medium",
+    category: "Corporate Formation"
+  },
+  {
+    section: "§721",
+    title: "Contributions to Partnership",
+    summary: "Tax-free contribution of property to partnership in exchange for partnership interest.",
+    keyPoints: [
+      "No gain/loss on contribution",
+      "No control requirement (unlike §351)",
+      "Basis = adjusted basis of property contributed",
+      "Built-in gain/loss tracked for later allocation",
+      "Services for partnership interest = taxable"
+    ],
+    relatedForms: ["Form 1065", "Schedule K-1"],
+    businessRelevance: "medium",
+    category: "Partnership Formation"
+  },
+  {
+    section: "§1361-1379",
+    title: "S Corporation Rules",
+    summary: "Election and rules for S Corporations - pass-through taxation with liability protection.",
+    keyPoints: [
+      "Must elect on Form 2553 (deadline: 2.5 months after year start)",
+      "Max 100 shareholders (all US individuals/trusts)",
+      "One class of stock only",
+      "Income/loss passes through to shareholders",
+      "No corporate-level tax (except certain built-in gains)",
+      "Reasonable salary required for shareholder-employees"
+    ],
+    limits: {
+      "maxShareholders": 100
+    },
+    relatedForms: ["Form 2553", "Form 1120-S", "Schedule K-1"],
+    businessRelevance: "high",
+    category: "Entity Types"
+  },
+  {
+    section: "§701-761",
+    title: "Partnership Taxation",
+    summary: "Tax rules for partnerships and LLCs taxed as partnerships.",
+    keyPoints: [
+      "Partnership is pass-through entity",
+      "Income/loss passes to partners via K-1",
+      "Guaranteed payments = like salary, deductible to partnership",
+      "Partnership distributions generally tax-free",
+      "Partner's basis = initial + income - distributions - losses",
+      "At-risk and passive loss rules apply at partner level"
+    ],
+    relatedForms: ["Form 1065", "Schedule K-1"],
+    businessRelevance: "high",
+    category: "Entity Types"
+  },
+  {
+    section: "§6662",
+    title: "Accuracy-Related Penalties",
+    summary: "Penalties for substantial understatements, negligence, or fraud.",
+    keyPoints: [
+      "20% penalty on underpayment",
+      "Substantial understatement: >$5,000 and >10% of tax shown",
+      "Negligence: failure to make reasonable attempt to comply",
+      "Reasonable cause defense available",
+      "Adequate disclosure can reduce penalty",
+      "75% fraud penalty for intentional evasion"
+    ],
+    limits: {
+      "accuracyPenalty": "20%",
+      "substantialUnderstatement_minimum": 5000,
+      "fraudPenalty": "75%"
+    },
+    relatedForms: ["Form 8275 (disclosure)"],
+    businessRelevance: "medium",
+    category: "Penalties"
+  },
+  {
+    section: "§7701",
+    title: "Entity Classification (Check-the-Box)",
+    summary: "Rules for classifying entities for tax purposes.",
+    keyPoints: [
+      "Default: single-member LLC = disregarded entity",
+      "Default: multi-member LLC = partnership",
+      "Can elect corporate treatment (Form 8832)",
+      "Cannot elect partnership if incorporated",
+      "Per se corporations: must be taxed as C-Corp",
+      "60-month rule for changing election"
+    ],
+    relatedForms: ["Form 8832"],
+    businessRelevance: "high",
+    category: "Entity Types"
   }
 ];
+
+// 2024 vs 2025 Tax Limits Comparison
+export const TAX_LIMITS_COMPARISON = {
+  "2024": {
+    standardDeduction_single: 14600,
+    standardDeduction_mfj: 29200,
+    section179_max: 1220000,
+    section179_phaseout: 3050000,
+    solo401k_employee: 23000,
+    solo401k_total: 69000,
+    SEP_IRA_max: 69000,
+    socialSecurity_wageBase: 168600,
+    standardMileage: 0.67,
+    bonusDepreciation: "60%",
+    vehicle_year1_withBonus: 20200,
+    heavySUV_179: 28900
+  },
+  "2025": {
+    standardDeduction_single: 15000,
+    standardDeduction_mfj: 30000,
+    section179_max: 1250000,
+    section179_phaseout: 3130000,
+    solo401k_employee: 23500,
+    solo401k_total: 70000,
+    SEP_IRA_max: 70000,
+    socialSecurity_wageBase: 176100,
+    standardMileage: 0.70,
+    bonusDepreciation: "40%",
+    vehicle_year1_withBonus: 20400,
+    heavySUV_179: 30500
+  }
+};
 
 // Helper functions
 export function findIRCSections(query: string): IRCSection[] {
@@ -980,6 +1468,132 @@ ${section.scheduleC_line ? `Schedule C Line: ${section.scheduleC_line}` : ''}
 Business Relevance: ${section.businessRelevance}
 `
   ).join('\n---\n');
+}
+
+// Analyze a transaction and return relevant IRC sections
+export function analyzeTransactionIRC(vendor: string, category: string, amount: number, context?: string): {
+  relevantSections: IRCSection[];
+  primarySection: IRCSection | null;
+  deductionStrategy: string;
+  scheduleCLine: string;
+  complianceNotes: string[];
+} {
+  const searchTerms = [vendor, category, context || ''].join(' ').toLowerCase();
+  let relevantSections: IRCSection[] = [];
+  let primarySection: IRCSection | null = null;
+  let deductionStrategy = '';
+  let scheduleCLine = '';
+  let complianceNotes: string[] = [];
+
+  // Map category to relevant IRC sections
+  const categoryMappings: Record<string, string[]> = {
+    'Software/SaaS': ['§162', '§162 Software', '§174'],
+    'Software': ['§162', '§162 Software', '§174'],
+    'Hardware': ['§179', '§168', '§280F'],
+    'Office': ['§162', '§162(a)(3)'],
+    'Office Supplies': ['§162'],
+    'Marketing': ['§162 Marketing'],
+    'Advertising': ['§162 Marketing'],
+    'Travel': ['§162(a)(2)', '§274'],
+    'Meals': ['§274', '§274(n)'],
+    'Business Meals': ['§274', '§274(n)'],
+    'Contractors': ['§162 Contractors', '§162(a)(1)'],
+    'Contract Labor': ['§162 Contractors', '§162(a)(1)'],
+    'Professional Services': ['§162', '§162(a)(1)'],
+    'Legal': ['§162'],
+    'Accounting': ['§162'],
+    'Insurance': ['§162 Insurance'],
+    'Rent': ['§162(a)(3)'],
+    'Utilities': ['§162'],
+    'Education': ['§162 Education'],
+    'Training': ['§162 Education'],
+    'Vehicle': ['§280F', '§274(d) Vehicles'],
+    'Transportation': ['§280F', '§274(d) Vehicles'],
+    'Interest': ['§163'],
+    'Taxes': ['§164']
+  };
+
+  // Find sections by category
+  const mappedSectionNames = categoryMappings[category] || ['§162'];
+  for (const sectionName of mappedSectionNames) {
+    const found = IRC_KNOWLEDGE_BASE.find(s => s.section === sectionName);
+    if (found) {
+      relevantSections.push(found);
+      if (!primarySection) primarySection = found;
+    }
+  }
+
+  // Search for additional relevant sections
+  const searchResults = findIRCSections(searchTerms);
+  for (const section of searchResults) {
+    if (!relevantSections.find(s => s.section === section.section)) {
+      relevantSections.push(section);
+    }
+  }
+
+  // Limit to top 5 most relevant
+  relevantSections = relevantSections.slice(0, 5);
+
+  // Determine Schedule C line
+  if (primarySection?.scheduleC_line) {
+    scheduleCLine = `Schedule C Line ${primarySection.scheduleC_line}`;
+  }
+
+  // Build deduction strategy
+  if (primarySection) {
+    deductionStrategy = `Under ${primarySection.section}, ${primarySection.summary.substring(0, 150)}...`;
+  }
+
+  // Add compliance notes
+  complianceNotes = [
+    "Keep receipt/invoice documenting the expense",
+    "Document business purpose in writing",
+    `Amount: $${amount.toLocaleString()} - ${amount >= 75 ? 'Receipt required' : 'Receipt recommended'}`
+  ];
+
+  // Special rules based on category
+  if (category.toLowerCase().includes('meal')) {
+    complianceNotes.push("Only 50% deductible per §274(n)");
+    complianceNotes.push("Document: who attended, business discussed, date, location");
+  }
+  if (category.toLowerCase().includes('travel')) {
+    complianceNotes.push("Must be 'away from home' overnight for lodging deduction");
+    complianceNotes.push("Meals while traveling: 50% deductible");
+  }
+  if (category.toLowerCase().includes('vehicle') || category.toLowerCase().includes('car')) {
+    complianceNotes.push("Keep mileage log: date, destination, purpose, miles");
+    complianceNotes.push("2025 standard rate: 70¢/mile");
+  }
+  if (amount >= 2500) {
+    complianceNotes.push("Consider §179 immediate expensing for equipment");
+  }
+
+  return {
+    relevantSections,
+    primarySection,
+    deductionStrategy,
+    scheduleCLine,
+    complianceNotes
+  };
+}
+
+// Get current year limits
+export function getCurrentYearLimits(year: '2024' | '2025' = '2025') {
+  return TAX_LIMITS_COMPARISON[year];
+}
+
+// Format IRC section for display
+export function formatIRCSectionDisplay(section: IRCSection): string {
+  return `**${section.section}: ${section.title}**
+
+${section.summary}
+
+**Key Points:**
+${section.keyPoints.map(p => `• ${p}`).join('\n')}
+
+${section.limits ? `**Limits:** ${Object.entries(section.limits).map(([k, v]) => `${k}: ${v}`).join(', ')}` : ''}
+${section.scheduleC_line ? `**Schedule C:** Line ${section.scheduleC_line}` : ''}
+${section.relatedForms ? `**Forms:** ${section.relatedForms.join(', ')}` : ''}`;
 }
 
 export default IRC_KNOWLEDGE_BASE;

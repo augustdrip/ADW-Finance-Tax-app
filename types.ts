@@ -12,7 +12,7 @@ export interface CompanyAsset {
   name: string;
   type: string;
   url: string;
-  category: 'Branding' | 'Legal' | 'Marketing' | 'Internal';
+  category: 'Branding' | 'Legal' | 'Marketing' | 'Internal' | 'Financial' | 'Receipt' | 'Tax' | string;
   dateAdded: string;
   size?: string;
 }
@@ -40,14 +40,31 @@ export interface Transaction {
 }
 
 export interface TaxAnalysis {
-  status: 'Analyzed' | 'Needs Review';
-  deductionPotential: 'High' | 'Medium' | 'Low' | 'None';
+  status: 'Analyzed' | 'Needs Review' | 'Analyzed (Offline)';
+  deductionPotential: 'High' | 'Medium' | 'Low' | 'None' | string;
   deductibleAmount: number;
   legalBasis: string;
   strategy: string;
   actionSteps: string[];
-  riskLevel: 'Safe' | 'Moderate' | 'Aggressive';
+  riskLevel: 'Safe' | 'Moderate' | 'Aggressive' | 'Low' | string;
   citedSections: string[];
+  scheduleCLine?: string;
+  ircSections?: Array<{
+    section: string;
+    title: string;
+    summary: string;
+  }>;
+}
+
+export interface IRCSectionSummary {
+  section: string;
+  title: string;
+  summary: string;
+  keyPoints: string[];
+  limits?: Record<string, string | number>;
+  scheduleC_line?: string;
+  businessRelevance: 'high' | 'medium' | 'low';
+  category: string;
 }
 
 export interface ClientAgreement {
