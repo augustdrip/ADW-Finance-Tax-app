@@ -1,14 +1,19 @@
-import { PrismaClient } from '@prisma/client';
+// Prisma client - will be available after running `npx prisma generate`
+// For now, using dynamic import to prevent build errors
+let prisma: any;
 
-// Prevent multiple instances in development
-const globalForPrisma = globalThis as unknown as {
-  prisma: PrismaClient | undefined;
-};
-
-export const prisma = globalForPrisma.prisma ?? new PrismaClient();
-
-if (process.env.NODE_ENV !== 'production') {
-  globalForPrisma.prisma = prisma;
+async function getPrismaClient() {
+  if (!prisma) {
+    try {
+      const { PrismaClient } = await import('@prisma/client');
+      prisma = new PrismaClient();
+    } catch (e) {
+      console.error('Prisma client not generated. Run: npx prisma generate');
+      throw new Error('Database not configured. Please run: npx prisma generate');
+    }
+  }
+  return prisma;
 }
 
-export default prisma;
+export { getPrismaClient };
+export default { getPrismaClient };

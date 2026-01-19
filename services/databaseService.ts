@@ -3,7 +3,8 @@
  * Replaces localStorage with proper database storage
  */
 
-const API_BASE = import.meta.env.PROD 
+// @ts-ignore - Vite's import.meta.env
+const API_BASE = typeof window !== 'undefined' && (import.meta as any).env?.PROD 
   ? '' // Same domain in production (Vercel)
   : 'http://localhost:3000'; // Local development
 
