@@ -296,14 +296,16 @@ export const generateMonthlySummary = async (
   transactions: { vendor: string; amount: number; category: string; date: string }[],
   invoices: { amount: number; status: string; clientName: string }[],
   bankBalance: number,
-  agreements: { clientName: string; value: number; status: string }[]
+  agreements: { clientName: string; value: number; status: string }[],
+  accountBalances?: { checking: number; savings: number; credit: number; creditAvailable?: number }
 ): Promise<MonthlySummary> => {
   const currentMonth = new Date().toLocaleString('default', { month: 'long', year: 'numeric' });
+  const currentYear = new Date().getFullYear();
   
   // Calculate key metrics
   const totalExpenses = transactions.reduce((sum, t) => sum + t.amount, 0);
   const totalRevenue = invoices.filter(i => i.status === 'Paid').reduce((sum, i) => sum + i.amount, 0);
-  const pendingRevenue = invoices.filter(i => i.status === 'Sent').reduce((sum, i) => sum + i.amount, 0);
+  const pendingRevenue = invoices.filter(i => i.status === 'Sent' || i.status === 'Draft').reduce((sum, i) => sum + i.amount, 0);
   const activeContractValue = agreements.filter(a => a.status === 'Active').reduce((sum, a) => sum + a.value, 0);
   
   // Group expenses by category
@@ -312,34 +314,124 @@ export const generateMonthlySummary = async (
     expensesByCategory[t.category] = (expensesByCategory[t.category] || 0) + t.amount;
   });
   
+  // Sort categories by amount (highest first)
+  const sortedCategories = Object.entries(expensesByCategory)
+    .sort(([, a], [, b]) => b - a);
+  
+  // Calculate monthly averages
+  const uniqueMonths = new Set(transactions.map(t => t.date.substring(0, 7))).size || 1;
+  const avgMonthlyExpenses = totalExpenses / uniqueMonths;
+  
+  // Get top vendors by spend
+  const vendorTotals: Record<string, number> = {};
+  transactions.forEach(t => {
+    vendorTotals[t.vendor] = (vendorTotals[t.vendor] || 0) + t.amount;
+  });
+  const topVendors = Object.entries(vendorTotals)
+    .sort(([, a], [, b]) => b - a)
+    .slice(0, 10);
+
+  // Tax-related calculations
+  const potentialQBI = Math.max(0, (totalRevenue - totalExpenses) * 0.20); // 20% QBI deduction
+  const estimatedSETax = Math.max(0, (totalRevenue - totalExpenses) * 0.9235 * 0.153); // 15.3% SE tax
+  const mealsExpenses = expensesByCategory['Meals'] || expensesByCategory['Business Meals'] || 0;
+  const mealsDeductible = mealsExpenses * 0.5; // Only 50% deductible
+  
   const prompt = `
-    Generate a comprehensive monthly financial strategy summary for Agency Dev Works for ${currentMonth}.
-    
-    FINANCIAL SNAPSHOT:
-    - Bank Balance: $${bankBalance.toLocaleString()}
-    - Total Revenue (Paid): $${totalRevenue.toLocaleString()}
-    - Pending Revenue: $${pendingRevenue.toLocaleString()}
-    - Total Expenses: $${totalExpenses.toLocaleString()}
-    - Net Cashflow: $${(totalRevenue - totalExpenses).toLocaleString()}
-    - Active Contract Pipeline: $${activeContractValue.toLocaleString()}
-    
-    EXPENSE BREAKDOWN:
-    ${Object.entries(expensesByCategory).map(([cat, amt]) => `- ${cat}: $${amt.toLocaleString()}`).join('\n')}
-    
-    TOP VENDORS:
-    ${transactions.slice(0, 10).map(t => `- ${t.vendor}: $${t.amount.toLocaleString()} (${t.category})`).join('\n')}
-    
-    ACTIVE CLIENTS:
-    ${agreements.filter(a => a.status === 'Active').map(a => `- ${a.clientName}: $${a.value.toLocaleString()}`).join('\n')}
-    
-    GOALS:
-    1. Identify concrete ways to SAVE money (reduce unnecessary spending, find cheaper alternatives, tax optimization)
-    2. Suggest NEW REVENUE VENTURES based on the agency's existing capabilities (AI/software development)
-    3. Identify any financial RISKS or areas needing attention
-    4. Provide actionable next steps for the month ahead
-    
-    Be specific, aggressive in finding opportunities, and think like a strategic CFO/business advisor.
-  `;
+You are a strategic CFO and tax advisor for Agency Dev Works, a software/AI development agency.
+Generate a comprehensive financial analysis and strategic recommendations for ${currentMonth}.
+
+═══════════════════════════════════════════════════════
+COMPLETE FINANCIAL SNAPSHOT
+═══════════════════════════════════════════════════════
+
+BANK ACCOUNTS:
+${accountBalances ? `
+- Checking Account: $${accountBalances.checking.toLocaleString()}
+- Savings Account: $${accountBalances.savings.toLocaleString()}
+- Credit Card Balance: $${accountBalances.credit.toLocaleString()} (owed)
+${accountBalances.creditAvailable ? `- Credit Available: $${accountBalances.creditAvailable.toLocaleString()}` : ''}
+- Total Liquid Cash: $${(accountBalances.checking + accountBalances.savings).toLocaleString()}
+` : `- Total Bank Balance: $${bankBalance.toLocaleString()}`}
+
+REVENUE METRICS:
+- Revenue Collected (Paid Invoices): $${totalRevenue.toLocaleString()}
+- Pending/Outstanding Invoices: $${pendingRevenue.toLocaleString()}
+- Active Contract Pipeline Value: $${activeContractValue.toLocaleString()}
+- Total Potential Revenue: $${(totalRevenue + pendingRevenue + activeContractValue).toLocaleString()}
+
+EXPENSE METRICS:
+- Total Expenses: $${totalExpenses.toLocaleString()}
+- Average Monthly Burn: $${avgMonthlyExpenses.toLocaleString()}
+- Number of Transactions: ${transactions.length}
+
+PROFITABILITY:
+- Net Profit: $${(totalRevenue - totalExpenses).toLocaleString()}
+- Profit Margin: ${totalRevenue > 0 ? ((totalRevenue - totalExpenses) / totalRevenue * 100).toFixed(1) : 0}%
+- Runway (months at current burn): ${avgMonthlyExpenses > 0 ? Math.floor(bankBalance / avgMonthlyExpenses) : 'N/A'}
+
+═══════════════════════════════════════════════════════
+EXPENSE BREAKDOWN BY CATEGORY
+═══════════════════════════════════════════════════════
+${sortedCategories.map(([cat, amt]) => `${cat}: $${amt.toLocaleString()} (${(amt / totalExpenses * 100).toFixed(1)}%)`).join('\n')}
+
+═══════════════════════════════════════════════════════
+TOP 10 VENDORS BY SPEND
+═══════════════════════════════════════════════════════
+${topVendors.map(([vendor, amt], i) => `${i + 1}. ${vendor}: $${amt.toLocaleString()}`).join('\n')}
+
+═══════════════════════════════════════════════════════
+ACTIVE CLIENT CONTRACTS
+═══════════════════════════════════════════════════════
+${agreements.filter(a => a.status === 'Active').map(a => `- ${a.clientName}: $${a.value.toLocaleString()}`).join('\n') || 'No active contracts'}
+
+═══════════════════════════════════════════════════════
+TAX IMPLICATIONS (${currentYear})
+═══════════════════════════════════════════════════════
+- Estimated Self-Employment Tax (15.3%): $${estimatedSETax.toLocaleString()}
+- Potential QBI Deduction (20% of profit): $${potentialQBI.toLocaleString()}
+- Meals Expenses (only 50% deductible): $${mealsExpenses.toLocaleString()} → $${mealsDeductible.toLocaleString()} deductible
+- §179 Available (2025): $1,250,000 for equipment
+- R&D Credit Potential: Software development may qualify under §41
+
+═══════════════════════════════════════════════════════
+ANALYSIS REQUIREMENTS
+═══════════════════════════════════════════════════════
+
+1. SAVINGS OPPORTUNITIES (find at least 3):
+   - Identify specific vendors or categories where spending can be reduced
+   - Suggest tax optimization strategies using IRC sections
+   - Look for redundant subscriptions or services
+   - Calculate potential annual savings for each opportunity
+
+2. REVENUE VENTURE IDEAS (suggest at least 3):
+   - Based on the agency's AI/software capabilities
+   - Consider productizing services
+   - Look at adjacent markets or client upsells
+   - Estimate potential revenue for each idea
+
+3. RISK ALERTS:
+   - Cash flow concerns
+   - Overdue invoices
+   - Concentration risk (too dependent on one client?)
+   - Upcoming tax obligations
+
+4. ACTION ITEMS (provide at least 4 specific actions):
+   - What should be done THIS WEEK
+   - What should be done THIS MONTH
+   - Each action should be concrete and actionable
+
+Be aggressive in finding opportunities. Think like a CFO trying to maximize profit and minimize tax liability.
+`;
+
+  console.log("[AI Summary] Generating strategic summary with data:", {
+    totalExpenses,
+    totalRevenue,
+    bankBalance,
+    transactionCount: transactions.length,
+    invoiceCount: invoices.length,
+    agreementCount: agreements.length
+  });
 
   try {
     const response = await ai.models.generateContent({

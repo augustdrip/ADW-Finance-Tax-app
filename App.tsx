@@ -560,22 +560,37 @@ const App: React.FC = () => {
 
   const handleGenerateSummary = async () => {
     setIsGeneratingSummary(true);
-    setNotification({ message: "AI Strategist analyzing your financials...", type: 'success' });
+    setNotification({ message: "AI Strategist analyzing your complete financials...", type: 'success' });
     
     try {
+      // Log what data we're sending
+      console.log("[Summary] Generating with:", {
+        transactions: transactions.length,
+        invoices: invoices.length,
+        agreements: agreements.length,
+        bankBalance,
+        accountBalances
+      });
+      
       const summary = await generateMonthlySummary(
         transactions.map(t => ({ vendor: t.vendor, amount: t.amount, category: t.category, date: t.date })),
         invoices.map(i => ({ amount: i.amount, status: i.status, clientName: i.clientName })),
         bankBalance,
-        agreements.map(a => ({ clientName: a.clientName, value: a.value, status: a.status }))
+        agreements.map(a => ({ clientName: a.clientName, value: a.value, status: a.status })),
+        {
+          checking: accountBalances.checking,
+          savings: accountBalances.savings,
+          credit: accountBalances.credit,
+          creditAvailable: accountBalances.creditAvailable
+        }
       );
       
       setMonthlySummary(summary);
       localStorage.setItem('monthly_summary', JSON.stringify(summary));
-      setNotification({ message: "Strategic summary generated successfully!", type: 'success' });
+      setNotification({ message: "Strategic summary generated! Check the analysis below.", type: 'success' });
     } catch (error: any) {
       console.error("Summary generation error:", error);
-      setNotification({ message: `Summary failed: ${error.message || 'Unknown error'}`, type: 'alert' });
+      setNotification({ message: `Summary failed: ${error.message || 'Unknown error'}. Try syncing Mercury first.`, type: 'alert' });
     } finally {
       setIsGeneratingSummary(false);
     }
