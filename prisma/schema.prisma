@@ -1,6 +1,3 @@
-// Prisma schema for ADW Finance/Tax App
-// Database: PostgreSQL (use Neon, Supabase, or PlanetScale)
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -9,90 +6,50 @@ datasource db {
   provider = "postgresql"
 }
 
-// Transactions / Expenses
-model Transaction {
-  id            String   @id @default(cuid())
-  date          String
-  vendor        String
-  amount        Float
-  category      String
-  context       String?
-  attachments   String[] // Array of attachment URLs
-  bankVerified  Boolean  @default(false)
-  bankId        String?  // Mercury transaction ID
-  madeBy        String?  // Who made this expense
-  receipts      String[] // Array of receipt URLs/base64
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model agreements {
+  id            String   @id
+  clientName    String
+  effectiveDate String
+  status        String
+  scopeOfWork   String?
+  value         Decimal? @db.Decimal
+  attachments   Json?    @default("[]")
 }
 
-// Service Agreements / Contracts
-model Agreement {
-  id             String   @id @default(cuid())
-  clientName     String
-  scopeOfWork    String
-  value          Float
-  status         String   @default("active") // active, completed, terminated
-  effectiveDate  String
-  expirationDate String?
-  notes          String?
-  attachments    String[] // PDF attachments
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model assets {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name      String
+  type      String
+  url       String
+  category  String
+  dateAdded DateTime? @default(dbgenerated("CURRENT_DATE")) @db.Date
+  size      String?
 }
 
-// Invoices
-model Invoice {
-  id            String   @id @default(cuid())
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model invoices {
+  id            String  @id
   invoiceNumber String
   clientName    String
-  amount        Float
-  status        String   @default("pending") // pending, paid, overdue
+  issueDate     String
   dueDate       String
-  items         Json?    // Line items as JSON
-  notes         String?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  amount        Decimal @db.Decimal
+  description   String?
+  status        String
 }
 
-// Asset Vault
-model Asset {
-  id        String   @id @default(cuid())
-  name      String
-  type      String   // MIME type
-  url       String   // File URL or base64
-  category  String   // Branding, Legal, Financial, etc.
-  dateAdded String
-  size      String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-}
-
-// AI Chat History
-model ChatMessage {
-  id        String   @id @default(cuid())
-  role      String   // user, assistant
-  content   String
-  timestamp DateTime @default(now())
-}
-
-// Monthly AI Summaries
-model MonthlySummary {
-  id        String   @id @default(cuid())
-  month     String   // e.g., "2024-01"
-  summary   String   @db.Text
-  createdAt DateTime @default(now())
-}
-
-// Mercury Sync State
-model MercurySyncState {
-  id           String   @id @default("mercury_sync")
-  lastSyncTime DateTime?
-  totalBalance Float    @default(0)
-  checking     Float    @default(0)
-  savings      Float    @default(0)
-  credit       Float    @default(0)
-  creditLimit  Float    @default(0)
-  creditAvailable Float @default(0)
-  updatedAt    DateTime @updatedAt
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model transactions {
+  id          String  @id
+  date        String
+  vendor      String
+  amount      Decimal @db.Decimal
+  category    String
+  subCategory String?
+  context     String?
+  analysis    Json?
+  attachments Json?   @default("[]")
 }

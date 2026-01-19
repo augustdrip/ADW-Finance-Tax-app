@@ -420,12 +420,12 @@ Be specific and actionable. Focus on cost reduction and revenue growth.`;
       totalExpenses,
       netCashflow: totalRevenue - totalExpenses,
       savingsOpportunities: result.savingsOpportunities || [
-        { title: "Review recurring subscriptions", description: "Audit all SaaS subscriptions for unused services", potentialSavings: Math.round(totalExpenses * 0.05), priority: "medium" },
-        { title: "Tax optimization", description: "Maximize §179 deductions for equipment purchases", potentialSavings: Math.round(totalExpenses * 0.03), priority: "high" }
+        { title: "Review recurring subscriptions", action: "Audit all SaaS subscriptions for unused services", potentialSavings: Math.round(totalExpenses * 0.05), priority: "Medium" as const },
+        { title: "Tax optimization", action: "Maximize §179 deductions for equipment purchases", potentialSavings: Math.round(totalExpenses * 0.03), priority: "High" as const }
       ],
       ventureOpportunities: result.ventureOpportunities || [
-        { idea: "AI consulting services", description: "Leverage AI expertise for consulting revenue", potentialRevenue: 5000, effort: "medium" },
-        { idea: "Productize existing tools", description: "Turn internal tools into SaaS products", potentialRevenue: 10000, effort: "high" }
+        { idea: "AI consulting services", reasoning: "Leverage AI expertise for consulting revenue", potentialRevenue: "$5,000/mo", timeToImplement: "2-3 months" },
+        { idea: "Productize existing tools", reasoning: "Turn internal tools into SaaS products", potentialRevenue: "$10,000/mo", timeToImplement: "6 months" }
       ],
       topExpenseCategories: result.topExpenseCategories || sortedCategories.slice(0, 5).map(([category, amount]) => ({ 
         category, 
@@ -452,10 +452,10 @@ Be specific and actionable. Focus on cost reduction and revenue growth.`;
       totalExpenses,
       netCashflow: totalRevenue - totalExpenses,
       savingsOpportunities: [
-        { title: "Review top expense categories", description: `Your largest expense category should be reviewed for savings`, potentialSavings: Math.round(totalExpenses * 0.1), priority: "high" as const }
+        { title: "Review top expense categories", action: "Your largest expense category should be reviewed for savings", potentialSavings: Math.round(totalExpenses * 0.1), priority: "High" as const }
       ],
       ventureOpportunities: [
-        { idea: "Expand service offerings", description: "Consider new service lines based on current capabilities", potentialRevenue: 5000, effort: "medium" as const }
+        { idea: "Expand service offerings", reasoning: "Consider new service lines based on current capabilities", potentialRevenue: "$5,000/mo", timeToImplement: "2-3 months" }
       ],
       topExpenseCategories: sortedCategories.slice(0, 5).map(([category, amount]) => ({ 
         category, 

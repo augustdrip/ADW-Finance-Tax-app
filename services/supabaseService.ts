@@ -2,8 +2,9 @@
 import { createClient } from '@supabase/supabase-js';
 import { Transaction, Invoice, ClientAgreement, CompanyAsset } from '../types';
 
-const supabaseUrl = 'https://drjigjzcnezctwwnfibr.supabase.co';
-const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRyamlnanpjbmV6Y3R3d25maWJyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njc0OTA2OTgsImV4cCI6MjA4MzA2NjY5OH0.3BntTAFqvBIxlU97XIuJssBgxJziYmVB5g6cNl1IjZ0';
+// Load from environment variables (VITE_ prefix required for client-side access)
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
 export const supabase = (supabaseUrl && supabaseAnonKey) 
   ? createClient(supabaseUrl, supabaseAnonKey) 
