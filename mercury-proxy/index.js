@@ -97,6 +97,34 @@ app.get('/api/mercury/credit-cards', async (req, res) => {
   }
 });
 
+// Proxy: GET /api/mercury/transactions (GLOBAL endpoint - all transactions)
+app.get('/api/mercury/transactions', async (req, res) => {
+  if (!MERCURY_API_KEY) {
+    return res.status(500).json({ error: 'MERCURY_API_KEY not configured on server' });
+  }
+  
+  try {
+    // Preserve query string (limit, offset, start, end, etc.)
+    const queryString = req.url.includes('?') ? req.url.substring(req.url.indexOf('?')) : '';
+    const url = `https://api.mercury.com/api/v1/transactions${queryString}`;
+    
+    console.log('[Proxy] Fetching GLOBAL transactions:', url);
+    const response = await fetch(url, {
+      headers: {
+        'Authorization': `Bearer ${MERCURY_API_KEY}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    const data = await response.json();
+    console.log('[Proxy] Global transactions response status:', response.status);
+    res.status(response.status).json(data);
+  } catch (error) {
+    console.error('[Proxy] Error fetching global transactions:', error);
+    res.status(500).json({ error: 'Proxy error', message: error.message });
+  }
+});
+
 // Proxy: GET /api/mercury/account/:accountId/transactions
 app.get('/api/mercury/account/:accountId/transactions', async (req, res) => {
   if (!MERCURY_API_KEY) {
