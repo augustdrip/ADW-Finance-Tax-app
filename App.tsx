@@ -1843,6 +1843,15 @@ const App: React.FC = () => {
                 </button>
               </div>
 
+              {/* Debug: Supabase Connection Status */}
+              <div className="bg-slate-800/50 border border-slate-700 rounded-lg p-3 text-xs">
+                <span className="text-slate-400">Supabase URL: </span>
+                <span className="text-emerald-400 font-mono">{import.meta.env.VITE_SUPABASE_URL ? '✓ Configured' : '✗ NOT SET'}</span>
+                <span className="text-slate-600 mx-2">|</span>
+                <span className="text-slate-400">Key: </span>
+                <span className="text-emerald-400 font-mono">{import.meta.env.VITE_SUPABASE_ANON_KEY ? '✓ Configured' : '✗ NOT SET'}</span>
+              </div>
+
               {/* Receipts Grid - PAGINATED for performance */}
               {isLoadingReceipts ? (
                 <div className="flex items-center justify-center py-20">
@@ -1853,6 +1862,7 @@ const App: React.FC = () => {
                 <div className="text-center py-20 text-slate-500">
                   <ImageIcon size={48} className="mx-auto mb-4 opacity-30" />
                   <p className="text-sm">No receipts found. Upload receipts from your receipt app.</p>
+                  <p className="text-xs mt-2 text-slate-600">Check console (F12) for connection errors.</p>
                 </div>
               ) : (
                 <>
