@@ -60,7 +60,9 @@ import {
   Activity,
   Eye,
   ExternalLink,
-  ZoomIn
+  ZoomIn,
+  Unlink,
+  Link2
 } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { jsPDF } from 'jspdf';
@@ -68,6 +70,7 @@ import { Transaction, DashboardStats, ChatMessage, ClientAgreement, Invoice, Att
 import { analyzeTransaction, streamStrategyChat, enhanceBusinessContext, generateMonthlySummary, MonthlySummary } from './services/geminiService';
 import { db } from './services/supabaseService';
 import { mercuryService, hasMercuryEnvKey } from './services/mercuryService';
+import { receiptsService, Receipt as ReceiptData } from './services/receiptsService';
 
 const COMPANY_INFO = {
   name: "Agency Dev Works",
@@ -102,11 +105,20 @@ const MOCK_DATA = {
 };
 
 const App: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'transactions' | 'agreements' | 'invoices' | 'chat' | 'tax' | 'assets'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'transactions' | 'receipts' | 'agreements' | 'invoices' | 'chat' | 'tax' | 'assets'>('dashboard');
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [agreements, setAgreements] = useState<ClientAgreement[]>([]);
   const [assets, setAssets] = useState<CompanyAsset[]>([]);
+  
+  // Receipts from adw-receipts Supabase project
+  const [receipts, setReceipts] = useState<ReceiptData[]>([]);
+  const [isLoadingReceipts, setIsLoadingReceipts] = useState(false);
+  const [selectedReceipt, setSelectedReceipt] = useState<ReceiptData | null>(null);
+  const [linkingReceiptToTransaction, setLinkingReceiptToTransaction] = useState<ReceiptData | null>(null);
+  const [receiptLinks, setReceiptLinks] = useState<Record<string, string>>(receiptsService.getReceiptLinks());
+  const [receiptPage, setReceiptPage] = useState(1);
+  const RECEIPTS_PER_PAGE = 12; // Show 12 at a time for performance
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
   const [isMercurySyncing, setIsMercurySyncing] = useState(false);
@@ -222,6 +234,9 @@ const App: React.FC = () => {
       setAgreements(localAgreements.length ? localAgreements : (aData?.length ? aData : MOCK_DATA.agreements as any));
       setInvoices(localInvoices.length ? localInvoices : (iData?.length ? iData : MOCK_DATA.invoices as any));
       setAssets(localAssets.length ? localAssets : (asData?.length ? asData : MOCK_DATA.assets as any));
+      
+      // Load receipts from adw-receipts Supabase (separate project)
+      loadReceipts();
     } catch (e) {
       console.error("Load Error:", e);
       // Fallback to localStorage then mock data
@@ -238,6 +253,43 @@ const App: React.FC = () => {
     } finally {
       setIsSyncing(false);
     }
+  };
+
+  // Load receipts from adw-receipts Supabase project
+  const loadReceipts = async () => {
+    setIsLoadingReceipts(true);
+    try {
+      const fetchedReceipts = await receiptsService.fetchAllReceipts();
+      setReceipts(fetchedReceipts);
+      console.log(`[Receipts] Loaded ${fetchedReceipts.length} receipts from adw-receipts`);
+    } catch (error) {
+      console.error('[Receipts] Failed to load receipts:', error);
+      setNotification({ message: 'Failed to load receipts from database', type: 'alert' });
+    } finally {
+      setIsLoadingReceipts(false);
+    }
+  };
+
+  // Link a receipt to a transaction (now saves to database!)
+  const handleLinkReceipt = async (receiptId: string, transactionId: string) => {
+    await receiptsService.linkReceiptToTransaction(receiptId, transactionId);
+    setReceiptLinks(receiptsService.getReceiptLinks());
+    setLinkingReceiptToTransaction(null);
+    setNotification({ message: 'Receipt linked to transaction! ✓ Saved to database', type: 'success' });
+  };
+
+  // Unlink a receipt (now saves to database!)
+  const handleUnlinkReceipt = async (receiptId: string) => {
+    await receiptsService.unlinkReceipt(receiptId);
+    setReceiptLinks(receiptsService.getReceiptLinks());
+    setNotification({ message: 'Receipt unlinked', type: 'success' });
+  };
+
+  // Get transaction details for a linked receipt
+  const getLinkedTransaction = (receiptId: string): Transaction | null => {
+    const txnId = receiptLinks[receiptId];
+    if (!txnId) return null;
+    return transactions.find(t => t.id === txnId) || null;
   };
 
   useEffect(() => { loadData(); }, []);
@@ -414,6 +466,10 @@ const App: React.FC = () => {
     setNotification({ message: "Connecting to Mercury Protocol...", type: 'success' });
 
     try {
+      // CLEAR OLD cached Mercury data first for fresh sync
+      localStorage.removeItem('mercury_transactions');
+      console.log('[Sync] 🗑️ Cleared old cached Mercury transactions');
+      
       // Call real Mercury API (uses env key if available, otherwise localStorage key)
       const mercuryTransactions = await mercuryService.fetchTransactions(keyToUse);
       
@@ -425,8 +481,19 @@ const App: React.FC = () => {
         bankVerified: true
       }));
       
+      // Find the most recent transaction date
+      if (processedTransactions.length > 0) {
+        const sortedByDate = [...processedTransactions].sort((a, b) => 
+          new Date(b.date || '').getTime() - new Date(a.date || '').getTime()
+        );
+        console.log('[Sync] 📅 Most recent transaction:', sortedByDate[0].date, '-', sortedByDate[0].vendor);
+        console.log('[Sync] 📅 Oldest transaction:', sortedByDate[sortedByDate.length - 1].date);
+      }
+      
       // Save ALL Mercury transactions to localStorage for persistence
       localStorage.setItem('mercury_transactions', JSON.stringify(processedTransactions));
+      localStorage.setItem('mercury_last_sync', new Date().toISOString());
+      console.log(`[Sync] ✅ Saved ${processedTransactions.length} fresh transactions`);
       
       // Update state with Mercury transactions + existing non-Mercury transactions
       setTransactions(prev => {
@@ -796,10 +863,12 @@ const App: React.FC = () => {
       {/* Sidebar */}
       <aside className={`bg-[#0F0F12] border-r border-white/5 transition-all duration-300 ${isSidebarOpen ? 'w-64' : 'w-20'} flex flex-col z-20`}>
         <div className="p-6 border-b border-white/5 bg-[#0F0F12]/50 backdrop-blur-md"><Logo /></div>
+        {/* Sidebar Navigation - Updated Jan 21 2026 */}
         <nav className="flex-1 px-4 space-y-1 mt-6 overflow-y-auto custom-scrollbar">
           {[
             { id: 'dashboard', icon: LayoutDashboard, label: 'Strategist HQ' },
             { id: 'transactions', icon: Receipt, label: 'Expenditures' },
+            { id: 'receipts', icon: Paperclip, label: 'Receipt Vault' },
             { id: 'agreements', icon: FileSignature, label: 'Service Agreements' },
             { id: 'invoices', icon: CreditCard, label: 'Revenue Log' },
             { id: 'tax', icon: Calculator, label: 'Tax Center' },
@@ -1452,18 +1521,26 @@ const App: React.FC = () => {
                             </div>
                           </td>
                           <td className="px-6 py-5 text-right flex justify-end gap-1">
-                            <button 
-                              onClick={() => { setReceiptUploadTransaction(t); setShowModal('receipt'); }} 
-                              className={`p-2 transition-colors relative ${t.attachments && t.attachments.length > 0 ? 'text-emerald-400 hover:text-emerald-300' : 'hover:text-amber-400'}`}
-                              title={t.attachments && t.attachments.length > 0 ? `${t.attachments.length} receipt(s) attached` : 'Upload receipt'}
-                            >
-                              <Paperclip size={16}/>
-                              {t.attachments && t.attachments.length > 0 && (
-                                <span className="absolute -top-1 -right-1 w-4 h-4 bg-emerald-500 text-white text-[8px] font-bold rounded-full flex items-center justify-center">
-                                  {t.attachments.length}
-                                </span>
-                              )}
-                            </button>
+                            {(() => {
+                              const uploadedCount = t.attachments?.length || 0;
+                              const vaultLinked = receiptsService.getReceiptsForTransaction(t.id);
+                              const totalReceipts = uploadedCount + vaultLinked.length;
+                              const hasReceipts = totalReceipts > 0;
+                              return (
+                                <button 
+                                  onClick={() => { setReceiptUploadTransaction(t); setShowModal('receipt'); }} 
+                                  className={`p-2 transition-colors relative ${hasReceipts ? 'text-emerald-400 hover:text-emerald-300' : 'hover:text-amber-400'}`}
+                                  title={hasReceipts ? `${totalReceipts} receipt(s) attached` : 'Upload/link receipt'}
+                                >
+                                  <Paperclip size={16}/>
+                                  {hasReceipts && (
+                                    <span className="absolute -top-1 -right-1 w-4 h-4 bg-emerald-500 text-white text-[8px] font-bold rounded-full flex items-center justify-center">
+                                      {totalReceipts}
+                                    </span>
+                                  )}
+                                </button>
+                              );
+                            })()}
                             <button onClick={() => { setEditingTransaction(t); setShowModal('transaction'); }} className="p-2 hover:text-indigo-400 transition-colors"><Edit3 size={16}/></button>
                             <button onClick={() => handleDeleteTransaction(t.id)} className="p-2 hover:text-rose-500 transition-colors"><Trash2 size={16}/></button>
                           </td>
@@ -1582,7 +1659,7 @@ const App: React.FC = () => {
                                   <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                                     {[
                                       { label: 'Business Purpose Documented', check: !!t.context },
-                                      { label: 'Receipt/Invoice Available', check: t.attachments && t.attachments.length > 0 },
+                                      { label: 'Receipt/Invoice Available', check: (t.attachments && t.attachments.length > 0) || receiptsService.getReceiptsForTransaction(t.id).length > 0 },
                                       { label: 'Bank Verification', check: t.bankVerified },
                                       { label: 'IRC Section Mapped', check: t.analysis.citedSections && t.analysis.citedSections.length > 0 },
                                       { label: 'Deduction Calculated', check: t.analysis.deductibleAmount > 0 },
@@ -1614,69 +1691,126 @@ const App: React.FC = () => {
                                 )}
 
                                 {/* Attached Receipts */}
-                                <div className="bg-white/[0.02] border border-white/5 rounded-xl p-4 space-y-3">
-                                  <div className="flex items-center justify-between">
-                                    <div className="flex items-center gap-2">
-                                      <Paperclip size={14} className="text-amber-400" />
-                                      <span className="text-[10px] font-black text-amber-400 uppercase tracking-widest">Attached Receipts</span>
-                                    </div>
-                                    <button 
-                                      onClick={() => { setReceiptUploadTransaction(t); setShowModal('receipt'); }}
-                                      className="text-[10px] text-indigo-400 hover:text-indigo-300 font-bold flex items-center gap-1"
-                                    >
-                                      <Plus size={12} /> Add Receipt
-                                    </button>
-                                  </div>
-                                  {t.attachments && t.attachments.length > 0 ? (
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                      {t.attachments.map(att => (
-                                        <div key={att.id} className="flex items-center justify-between p-3 bg-white/[0.02] rounded-xl border border-white/5 group hover:border-indigo-500/30 transition-colors">
-                                          <div className="flex items-center gap-3">
-                                            <div className={`p-2 rounded-lg ${att.type.includes('image') ? 'bg-indigo-500/10' : 'bg-rose-500/10'}`}>
-                                              {att.type.includes('image') ? (
-                                                <ImageIcon size={16} className="text-indigo-400" />
-                                              ) : (
-                                                <FileText size={16} className="text-rose-400" />
-                                              )}
-                                            </div>
-                                            <div>
-                                              <p className="text-xs font-bold text-white truncate max-w-[150px]">{att.name}</p>
-                                              <p className="text-[10px] text-slate-500">{att.dateAdded}</p>
-                                            </div>
-                                          </div>
-                                          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                            <button 
-                                              onClick={() => {
-                                                setViewingAsset({
-                                                  id: att.id,
-                                                  name: att.name,
-                                                  type: att.type,
-                                                  url: att.url,
-                                                  category: 'Receipt',
-                                                  dateAdded: att.dateAdded,
-                                                  size: ''
-                                                });
-                                              }}
-                                              className="p-1.5 hover:bg-indigo-500/20 rounded-lg transition-colors"
-                                              title="View"
-                                            >
-                                              <Eye size={14} className="text-indigo-400" />
-                                            </button>
-                                            <button 
-                                              onClick={() => handleDeleteReceipt(t.id, att.id)}
-                                              className="p-1.5 hover:bg-rose-500/20 rounded-lg transition-colors"
-                                              title="Delete"
-                                            >
-                                              <Trash2 size={14} className="text-rose-400" />
-                                            </button>
-                                          </div>
+                                {(() => {
+                                  const vaultLinked = receiptsService.getReceiptsForTransaction(t.id);
+                                  const linkedVaultReceipts = receipts.filter(r => vaultLinked.includes(r.id));
+                                  const hasUploaded = t.attachments && t.attachments.length > 0;
+                                  const hasVault = linkedVaultReceipts.length > 0;
+                                  const hasAny = hasUploaded || hasVault;
+                                  
+                                  return (
+                                    <div className="bg-white/[0.02] border border-white/5 rounded-xl p-4 space-y-3">
+                                      <div className="flex items-center justify-between">
+                                        <div className="flex items-center gap-2">
+                                          <Paperclip size={14} className="text-amber-400" />
+                                          <span className="text-[10px] font-black text-amber-400 uppercase tracking-widest">
+                                            Attached Receipts ({(t.attachments?.length || 0) + linkedVaultReceipts.length})
+                                          </span>
                                         </div>
-                                      ))}
+                                        <button 
+                                          onClick={() => { setReceiptUploadTransaction(t); setShowModal('receipt'); }}
+                                          className="text-[10px] text-indigo-400 hover:text-indigo-300 font-bold flex items-center gap-1"
+                                        >
+                                          <Plus size={12} /> Add Receipt
+                                        </button>
+                                      </div>
+                                      
+                                      {hasAny ? (
+                                        <div className="space-y-3">
+                                          {/* Vault-Linked Receipts */}
+                                          {hasVault && (
+                                            <div>
+                                              <p className="text-[9px] font-bold text-indigo-400 uppercase tracking-widest mb-2">📎 From Receipt Vault</p>
+                                              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                                {linkedVaultReceipts.map(r => (
+                                                  <div key={r.id} className="flex items-center justify-between p-3 bg-indigo-500/5 rounded-xl border border-indigo-500/20 group hover:border-indigo-400/40 transition-colors">
+                                                    <div className="flex items-center gap-3">
+                                                      <img src={r.public_url + '?width=40&quality=60'} alt="Receipt" className="w-10 h-10 object-cover rounded-lg" loading="lazy" />
+                                                      <div>
+                                                        <p className="text-xs font-bold text-white">Vault Receipt</p>
+                                                        <p className="text-[10px] text-slate-500">{new Date(r.created_at).toLocaleDateString()}</p>
+                                                      </div>
+                                                    </div>
+                                                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                      <button 
+                                                        onClick={() => setViewingAsset({ id: r.id, name: 'Receipt', type: 'image/jpeg', url: r.public_url, category: 'Receipt', dateAdded: r.created_at, size: '' })}
+                                                        className="p-1.5 hover:bg-indigo-500/20 rounded-lg transition-colors"
+                                                        title="View"
+                                                      >
+                                                        <Eye size={14} className="text-indigo-400" />
+                                                      </button>
+                                                      <button 
+                                                        onClick={() => handleUnlinkReceipt(r.id)}
+                                                        className="p-1.5 hover:bg-rose-500/20 rounded-lg transition-colors"
+                                                        title="Unlink"
+                                                      >
+                                                        <Unlink size={14} className="text-rose-400" />
+                                                      </button>
+                                                    </div>
+                                                  </div>
+                                                ))}
+                                              </div>
+                                            </div>
+                                          )}
+                                          
+                                          {/* Uploaded Receipts */}
+                                          {hasUploaded && (
+                                            <div>
+                                              {hasVault && <p className="text-[9px] font-bold text-amber-400 uppercase tracking-widest mb-2">📤 Uploaded</p>}
+                                              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                                {t.attachments!.map(att => (
+                                                  <div key={att.id} className="flex items-center justify-between p-3 bg-white/[0.02] rounded-xl border border-white/5 group hover:border-indigo-500/30 transition-colors">
+                                                    <div className="flex items-center gap-3">
+                                                      <div className={`p-2 rounded-lg ${att.type.includes('image') ? 'bg-indigo-500/10' : 'bg-rose-500/10'}`}>
+                                                        {att.type.includes('image') ? (
+                                                          <ImageIcon size={16} className="text-indigo-400" />
+                                                        ) : (
+                                                          <FileText size={16} className="text-rose-400" />
+                                                        )}
+                                                      </div>
+                                                      <div>
+                                                        <p className="text-xs font-bold text-white truncate max-w-[150px]">{att.name}</p>
+                                                        <p className="text-[10px] text-slate-500">{att.dateAdded}</p>
+                                                      </div>
+                                                    </div>
+                                                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                      <button 
+                                                        onClick={() => {
+                                                          setViewingAsset({
+                                                            id: att.id,
+                                                            name: att.name,
+                                                            type: att.type,
+                                                            url: att.url,
+                                                            category: 'Receipt',
+                                                            dateAdded: att.dateAdded,
+                                                            size: ''
+                                                          });
+                                                        }}
+                                                        className="p-1.5 hover:bg-indigo-500/20 rounded-lg transition-colors"
+                                                        title="View"
+                                                      >
+                                                        <Eye size={14} className="text-indigo-400" />
+                                                      </button>
+                                                      <button 
+                                                        onClick={() => handleDeleteReceipt(t.id, att.id)}
+                                                        className="p-1.5 hover:bg-rose-500/20 rounded-lg transition-colors"
+                                                        title="Delete"
+                                                      >
+                                                        <Trash2 size={14} className="text-rose-400" />
+                                                      </button>
+                                                    </div>
+                                                  </div>
+                                                ))}
+                                              </div>
+                                            </div>
+                                          )}
+                                        </div>
+                                      ) : (
+                                        <p className="text-[11px] text-slate-500 italic">No receipts attached. Click "Add Receipt" to upload or link from vault.</p>
+                                      )}
                                     </div>
-                                  ) : (
-                                    <p className="text-[11px] text-slate-500 italic">No receipts attached. Click "Add Receipt" to upload documentation.</p>
-                                  )}
-                                </div>
+                                  );
+                                })()}
                               </div>
                             </td>
                           </tr>
@@ -1685,6 +1819,227 @@ const App: React.FC = () => {
                     ))}
                   </tbody>
                 </table>
+              </div>
+            </div>
+          )}
+
+          {/* RECEIPT VAULT - Receipts from adw-receipts app */}
+          {activeTab === 'receipts' && (
+            <div className="space-y-6 animate-in fade-in duration-500">
+              <div className="flex justify-between items-center">
+                <div>
+                  <h2 className="text-2xl font-black text-white">Receipt Vault</h2>
+                  <p className="text-xs text-slate-500">
+                    Uploaded receipts • {receipts.length} total • Page {receiptPage} of {Math.ceil(receipts.length / RECEIPTS_PER_PAGE)}
+                  </p>
+                </div>
+                <button 
+                  onClick={() => { setReceiptPage(1); loadReceipts(); }} 
+                  disabled={isLoadingReceipts}
+                  className="bg-indigo-600 hover:bg-indigo-500 text-white px-5 py-2.5 rounded-xl text-xs font-black uppercase flex items-center gap-2 transition-all shadow-lg active:scale-95 disabled:opacity-50"
+                >
+                  {isLoadingReceipts ? <Loader2 size={18} className="animate-spin" /> : <RefreshCcw size={18} />}
+                  Refresh
+                </button>
+              </div>
+
+              {/* Receipts Grid - PAGINATED for performance */}
+              {isLoadingReceipts ? (
+                <div className="flex items-center justify-center py-20">
+                  <Loader2 size={32} className="animate-spin text-indigo-400" />
+                  <span className="ml-3 text-slate-400">Loading receipts...</span>
+                </div>
+              ) : receipts.length === 0 ? (
+                <div className="text-center py-20 text-slate-500">
+                  <ImageIcon size={48} className="mx-auto mb-4 opacity-30" />
+                  <p className="text-sm">No receipts found. Upload receipts from your receipt app.</p>
+                </div>
+              ) : (
+                <>
+                  <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-3">
+                    {receipts
+                      .slice((receiptPage - 1) * RECEIPTS_PER_PAGE, receiptPage * RECEIPTS_PER_PAGE)
+                      .map(receipt => {
+                      const linkedTxn = getLinkedTransaction(receipt.id);
+                      const isImage = receipt.file_path.match(/\.(jpg|jpeg|png|gif|webp)$/i);
+                      // Use thumbnail URL for faster loading (Supabase image transform)
+                      const thumbnailUrl = receipt.public_url.includes('supabase.co') 
+                        ? `${receipt.public_url}?width=200&quality=60` 
+                        : receipt.public_url;
+                      
+                      return (
+                        <div 
+                          key={receipt.id} 
+                          className={`bg-[#121216] border rounded-xl overflow-hidden transition-all hover:border-indigo-500/50 group ${
+                            linkedTxn ? 'border-emerald-500/30' : 'border-white/5'
+                          }`}
+                        >
+                          {/* Receipt Image/Preview - Using thumbnail for speed */}
+                          <div 
+                            className="aspect-square bg-black/40 relative cursor-pointer overflow-hidden"
+                            onClick={() => window.open(receipt.public_url, '_blank')}
+                          >
+                            {isImage ? (
+                              <img 
+                                src={thumbnailUrl} 
+                                alt="Receipt" 
+                                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                                loading="lazy"
+                                decoding="async"
+                              />
+                            ) : (
+                              <div className="w-full h-full flex items-center justify-center">
+                                <FileText size={32} className="text-slate-500" />
+                              </div>
+                            )}
+                            
+                            {/* Hover Overlay */}
+                            <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                              <ZoomIn size={20} className="text-white" />
+                            </div>
+                            
+                            {/* Linked Badge */}
+                            {linkedTxn && (
+                              <div className="absolute top-1 right-1 bg-emerald-500 text-white text-[8px] px-1.5 py-0.5 rounded font-bold flex items-center gap-0.5">
+                                <LinkIcon size={8} /> Linked
+                              </div>
+                            )}
+                          </div>
+                          
+                          {/* Receipt Info - Compact */}
+                          <div className="p-2 space-y-1">
+                            <div className="text-[9px] text-slate-500">
+                              {new Date(receipt.created_at).toLocaleDateString('en-US', { 
+                                month: 'short', day: 'numeric', year: '2-digit'
+                              })}
+                            </div>
+                            
+                            {linkedTxn ? (
+                              <div className="text-[10px]">
+                                <div className="text-emerald-400 font-bold truncate">{linkedTxn.vendor}</div>
+                                <div className="text-slate-400">${linkedTxn.amount.toFixed(2)}</div>
+                                <button 
+                                  onClick={(e) => { e.stopPropagation(); handleUnlinkReceipt(receipt.id); }}
+                                  className="mt-1 text-[9px] text-rose-400 hover:text-rose-300 flex items-center gap-0.5"
+                                >
+                                  <X size={10} /> Unlink
+                                </button>
+                              </div>
+                            ) : (
+                              <button 
+                                onClick={(e) => { e.stopPropagation(); setLinkingReceiptToTransaction(receipt); }}
+                                className="w-full text-[9px] bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 px-2 py-1.5 rounded font-bold transition-colors flex items-center justify-center gap-1"
+                              >
+                              <LinkIcon size={10} /> Link
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  </div>
+                  
+                  {/* Pagination Controls */}
+                  {receipts.length > RECEIPTS_PER_PAGE && (
+                    <div className="flex items-center justify-center gap-2 pt-4">
+                      <button
+                        onClick={() => setReceiptPage(p => Math.max(1, p - 1))}
+                        disabled={receiptPage === 1}
+                        className="px-4 py-2 bg-white/5 hover:bg-white/10 disabled:opacity-30 disabled:cursor-not-allowed rounded-lg text-sm font-medium transition-colors"
+                      >
+                        ← Previous
+                      </button>
+                      <div className="flex gap-1">
+                        {Array.from({ length: Math.ceil(receipts.length / RECEIPTS_PER_PAGE) }, (_, i) => i + 1)
+                          .slice(Math.max(0, receiptPage - 3), receiptPage + 2)
+                          .map(page => (
+                            <button
+                              key={page}
+                              onClick={() => setReceiptPage(page)}
+                              className={`w-8 h-8 rounded-lg text-sm font-bold transition-colors ${
+                                page === receiptPage 
+                                  ? 'bg-indigo-600 text-white' 
+                                  : 'bg-white/5 hover:bg-white/10 text-slate-400'
+                              }`}
+                            >
+                              {page}
+                            </button>
+                          ))}
+                      </div>
+                      <button
+                        onClick={() => setReceiptPage(p => Math.min(Math.ceil(receipts.length / RECEIPTS_PER_PAGE), p + 1))}
+                        disabled={receiptPage >= Math.ceil(receipts.length / RECEIPTS_PER_PAGE)}
+                        className="px-4 py-2 bg-white/5 hover:bg-white/10 disabled:opacity-30 disabled:cursor-not-allowed rounded-lg text-sm font-medium transition-colors"
+                      >
+                        Next →
+                      </button>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+
+          {/* Modal: Link Receipt to Transaction */}
+          {linkingReceiptToTransaction && (
+            <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+              <div className="bg-[#0d0d10] border border-white/10 rounded-3xl w-full max-w-2xl max-h-[80vh] overflow-hidden">
+                <div className="p-6 border-b border-white/5 flex justify-between items-center">
+                  <div>
+                    <h3 className="text-lg font-bold text-white">Link Receipt to Transaction</h3>
+                    <p className="text-xs text-slate-500">Select the expense this receipt belongs to</p>
+                  </div>
+                  <button onClick={() => setLinkingReceiptToTransaction(null)} className="text-slate-400 hover:text-white">
+                    <X size={24} />
+                  </button>
+                </div>
+                
+                {/* Receipt Preview */}
+                <div className="p-4 bg-black/30 flex items-center gap-4">
+                  <img 
+                    src={linkingReceiptToTransaction.public_url} 
+                    alt="Receipt" 
+                    className="w-20 h-20 object-cover rounded-xl"
+                  />
+                  <div>
+                    <div className="text-sm text-white font-bold">Selected Receipt</div>
+                    <div className="text-xs text-slate-400">
+                      Uploaded {new Date(linkingReceiptToTransaction.created_at).toLocaleDateString()}
+                    </div>
+                  </div>
+                </div>
+                
+                {/* Transactions List */}
+                <div className="p-4 overflow-y-auto max-h-[400px] space-y-2">
+                  {transactions
+                    .filter(t => t.amount > 0) // Only show expenses
+                    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+                    .slice(0, 50) // Limit to recent 50
+                    .map(txn => {
+                      const alreadyLinked = Object.values(receiptLinks).includes(txn.id);
+                      return (
+                        <button
+                          key={txn.id}
+                          onClick={() => handleLinkReceipt(linkingReceiptToTransaction.id, txn.id)}
+                          disabled={alreadyLinked}
+                          className={`w-full text-left p-4 rounded-xl border transition-all flex justify-between items-center ${
+                            alreadyLinked 
+                              ? 'border-white/5 bg-white/5 opacity-50 cursor-not-allowed' 
+                              : 'border-white/5 hover:border-indigo-500/50 hover:bg-indigo-500/5'
+                          }`}
+                        >
+                          <div>
+                            <div className="font-bold text-white">{txn.vendor}</div>
+                            <div className="text-xs text-slate-400">{txn.date} • {txn.category}</div>
+                          </div>
+                          <div className="text-right">
+                            <div className="text-lg font-black text-rose-400">${txn.amount.toFixed(2)}</div>
+                            {alreadyLinked && <div className="text-[9px] text-slate-500">Already linked</div>}
+                          </div>
+                        </button>
+                      );
+                    })}
+                </div>
               </div>
             </div>
           )}
@@ -3080,6 +3435,133 @@ const App: React.FC = () => {
                 </div>
               </div>
             )}
+
+            {/* Receipts Linked from Vault */}
+            {(() => {
+              const linkedFromVault = receiptsService.getReceiptsForTransaction(receiptUploadTransaction.id);
+              const linkedReceipts = receipts.filter(r => linkedFromVault.includes(r.id));
+              if (linkedReceipts.length > 0) {
+                return (
+                  <div className="mb-6">
+                    <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest mb-3">📎 Linked from Receipt Vault ({linkedReceipts.length})</p>
+                    <div className="space-y-2">
+                      {linkedReceipts.map(r => (
+                        <div key={r.id} className="flex items-center justify-between p-3 bg-indigo-500/5 rounded-xl border border-indigo-500/20">
+                          <div className="flex items-center gap-3">
+                            <img src={r.public_url + '?width=40&quality=60'} alt="Receipt" className="w-10 h-10 object-cover rounded-lg" />
+                            <div>
+                              <span className="text-xs text-white font-bold">Vault Receipt</span>
+                              <div className="text-[10px] text-slate-400">{new Date(r.created_at).toLocaleDateString()}</div>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <button 
+                              onClick={() => setViewingAsset({ id: r.id, name: 'Receipt', type: 'image/jpeg', url: r.public_url, category: 'Receipt', dateAdded: r.created_at, size: '' })}
+                              className="p-1.5 hover:bg-indigo-500/20 rounded transition-colors"
+                            >
+                              <Eye size={12} className="text-indigo-400" />
+                            </button>
+                            <button 
+                              onClick={() => handleUnlinkReceipt(r.id)}
+                              className="p-1.5 hover:bg-rose-500/20 rounded transition-colors"
+                            >
+                              <Unlink size={12} className="text-rose-400" />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              }
+              return null;
+            })()}
+
+            {/* Link from Vault Section */}
+            <div className="mb-6">
+              <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-3">🗃️ Link from Receipt Vault</p>
+              {receipts.length > 0 ? (
+                <div>
+                  {/* Show receipts from ±7 days of transaction date */}
+                  {(() => {
+                    const txnDate = new Date(receiptUploadTransaction.date);
+                    const alreadyLinked = receiptsService.getReceiptsForTransaction(receiptUploadTransaction.id);
+                    const nearbyReceipts = receipts
+                      .filter(r => {
+                        if (alreadyLinked.includes(r.id)) return false;
+                        const receiptDate = new Date(r.created_at);
+                        const daysDiff = Math.abs((receiptDate.getTime() - txnDate.getTime()) / (1000 * 60 * 60 * 24));
+                        return daysDiff <= 7;
+                      })
+                      .slice(0, 6);
+                    
+                    if (nearbyReceipts.length === 0) {
+                      const unlinkedReceipts = receipts.filter(r => !receiptsService.getTransactionForReceipt(r.id)).slice(0, 4);
+                      if (unlinkedReceipts.length === 0) {
+                        return <p className="text-[11px] text-slate-500 italic">All receipts are already linked.</p>;
+                      }
+                      return (
+                        <>
+                          <p className="text-[11px] text-slate-500 mb-3">No receipts found within 7 days. Showing unlinked receipts:</p>
+                          <div className="grid grid-cols-4 gap-2">
+                            {unlinkedReceipts.map(r => (
+                              <button
+                                key={r.id}
+                                onClick={() => { handleLinkReceipt(r.id, receiptUploadTransaction.id); }}
+                                className="group relative aspect-square rounded-xl overflow-hidden border-2 border-white/10 hover:border-indigo-500/50 transition-all"
+                              >
+                                <img src={r.public_url + '?width=80&quality=60'} alt="Receipt" className="w-full h-full object-cover" loading="lazy" />
+                                <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                  <Link2 size={16} className="text-indigo-400" />
+                                </div>
+                                <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-1">
+                                  <div className="text-[8px] text-white truncate">{new Date(r.created_at).toLocaleDateString()}</div>
+                                </div>
+                              </button>
+                            ))}
+                          </div>
+                        </>
+                      );
+                    }
+                    
+                    return (
+                      <>
+                        <p className="text-[11px] text-emerald-400 mb-3 flex items-center gap-1.5">
+                          <Sparkles size={12} /> {nearbyReceipts.length} receipt(s) found within 7 days of this transaction
+                        </p>
+                        <div className="grid grid-cols-3 gap-2">
+                          {nearbyReceipts.map(r => (
+                            <button
+                              key={r.id}
+                              onClick={() => { handleLinkReceipt(r.id, receiptUploadTransaction.id); }}
+                              className="group relative aspect-square rounded-xl overflow-hidden border-2 border-emerald-500/30 hover:border-emerald-400 transition-all bg-emerald-500/5"
+                            >
+                              <img src={r.public_url + '?width=100&quality=60'} alt="Receipt" className="w-full h-full object-cover" loading="lazy" />
+                              <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                <span className="text-[10px] text-white font-bold flex items-center gap-1"><Link2 size={12} /> Link</span>
+                              </div>
+                              <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-1">
+                                <div className="text-[8px] text-emerald-400 truncate">{new Date(r.created_at).toLocaleDateString()}</div>
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      </>
+                    );
+                  })()}
+                </div>
+              ) : (
+                <p className="text-[11px] text-slate-500 italic">No receipts in vault. Upload receipts in your receipt app first.</p>
+              )}
+            </div>
+
+            {/* Divider */}
+            <div className="relative mb-6">
+              <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-white/10"></div></div>
+              <div className="relative flex justify-center">
+                <span className="bg-[#121216] px-4 text-[10px] font-bold text-slate-500 uppercase">Or Upload New</span>
+              </div>
+            </div>
 
             {/* Upload Area */}
             <div 

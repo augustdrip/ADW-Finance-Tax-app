@@ -154,6 +154,61 @@ export const mercuryService = {
   },
 
   /**
+   * Fetches transactions from the GLOBAL /transactions endpoint
+   * This might return transactions not visible in account-specific endpoints
+   */
+  async fetchGlobalTransactions(apiKey: string): Promise<MercuryTransaction[]> {
+    const apiKeyStr = typeof apiKey === 'string' ? apiKey : String((apiKey as any) ?? '');
+    
+    console.log("[Mercury] 🌐 Fetching from GLOBAL /transactions endpoint...");
+    
+    const allTransactions: MercuryTransaction[] = [];
+    let offset = 0;
+    const limit = 500;
+    let hasMore = true;
+    
+    const startDate = '2020-01-01';
+    const endDate = new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0];
+
+    while (hasMore) {
+      const url = `${MERCURY_API_BASE}/transactions?limit=${limit}&offset=${offset}&start=${startDate}&end=${endDate}`;
+      console.log(`[Mercury] 🌐 Global fetch: offset=${offset}`);
+      
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${apiKeyStr}`,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        }
+      });
+
+      if (!response.ok) {
+        console.log(`[Mercury] 🌐 Global endpoint returned ${response.status} - might not be available`);
+        break;
+      }
+
+      const data = await response.json();
+      const transactions = data.transactions || [];
+      
+      allTransactions.push(...transactions);
+      console.log(`[Mercury] 🌐 Global: fetched ${transactions.length} (total: ${allTransactions.length})`);
+
+      if (transactions.length < limit) {
+        hasMore = false;
+      } else {
+        offset += limit;
+        if (offset > 10000) {
+          hasMore = false;
+        }
+      }
+    }
+
+    console.log(`[Mercury] 🌐 Global endpoint total: ${allTransactions.length} transactions`);
+    return allTransactions;
+  },
+
+  /**
    * Fetches ALL transactions from a specific Mercury account using pagination
    * Uses date range to get complete history back to account creation
    */
@@ -168,17 +223,19 @@ export const mercuryService = {
     const limit = 500; // Max per request
     let hasMore = true;
 
-    // Set date range to get ALL history (from 2020 to now + 1 day)
+    // Set date range: from business start to 30 days in future (catches scheduled/pending)
     const startDate = '2020-01-01';
-    const endDate = new Date(Date.now() + 86400000).toISOString().split('T')[0]; // Tomorrow
+    const endDate = new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0]; // 30 days in future
     
-    console.log(`[Mercury] Fetching all transactions for account ${accountId}...`);
-    console.log(`[Mercury] Date range: ${startDate} to ${endDate}`);
+    console.log(`[Mercury] 🔄 Fetching ALL transactions for account ${accountId}...`);
+    console.log(`[Mercury] 📅 Date range: ${startDate} to ${endDate} (30 days ahead)`);
+    console.log(`[Mercury] 📅 Today is: ${new Date().toISOString().split('T')[0]}`);
 
     while (hasMore) {
-      // Mercury API supports: limit, offset, start, end, status, search
+      // Mercury API: NOT specifying status means get ALL (pending, sent, completed, failed, cancelled)
+      // Adding explicit parameters to ensure complete data
       const url = `${MERCURY_API_BASE}/account/${accountId}/transactions?limit=${limit}&offset=${offset}&start=${startDate}&end=${endDate}`;
-      console.log(`[Mercury] Fetching: offset=${offset}, limit=${limit}, start=${startDate}, end=${endDate}`);
+      console.log(`[Mercury] 📥 Fetching batch: offset=${offset}, limit=${limit}`);
       
       const response = await fetch(url, {
         method: 'GET',
@@ -239,17 +296,50 @@ export const mercuryService = {
       }
 
       // Step 2: Fetch ALL transactions from each account (with pagination and date range)
-      const allTransactions: MercuryTransaction[] = [];
+      const accountTransactions: MercuryTransaction[] = [];
       
       for (const account of accounts) {
         console.log(`[Mercury] ===== Fetching transactions for account: ${account.name} (${account.id}) =====`);
         const transactions = await this.fetchAccountTransactions(key, account.id);
         console.log(`[Mercury] Got ${transactions.length} transactions from ${account.name}`);
-        allTransactions.push(...transactions);
+        accountTransactions.push(...transactions);
       }
 
       console.log(`[Mercury] ========================================`);
-      console.log(`[Mercury] Total raw transactions across all accounts: ${allTransactions.length}`);
+      console.log(`[Mercury] Transactions from account endpoints: ${accountTransactions.length}`);
+
+      // Step 2b: ALSO fetch from global /transactions endpoint (might have data account endpoints miss)
+      let globalTransactions: MercuryTransaction[] = [];
+      try {
+        globalTransactions = await this.fetchGlobalTransactions(key);
+        console.log(`[Mercury] Transactions from global endpoint: ${globalTransactions.length}`);
+      } catch (err) {
+        console.log(`[Mercury] Global endpoint not available, using account-specific only`);
+      }
+
+      // Merge and deduplicate by ID (global might have same transactions)
+      const transactionMap = new Map<string, MercuryTransaction>();
+      
+      // Add account transactions first
+      for (const t of accountTransactions) {
+        transactionMap.set(t.id, t);
+      }
+      
+      // Add global transactions (will add any not in account endpoints)
+      let newFromGlobal = 0;
+      for (const t of globalTransactions) {
+        if (!transactionMap.has(t.id)) {
+          transactionMap.set(t.id, t);
+          newFromGlobal++;
+        }
+      }
+      
+      if (newFromGlobal > 0) {
+        console.log(`[Mercury] ✨ Found ${newFromGlobal} NEW transactions from global endpoint!`);
+      }
+
+      const allTransactions = Array.from(transactionMap.values());
+      console.log(`[Mercury] Total unique transactions: ${allTransactions.length}`);
 
       // Log breakdown
       const incomingCount = allTransactions.filter(t => t.amount > 0).length;
@@ -259,12 +349,42 @@ export const mercuryService = {
       
       // Log date range of ALL transactions
       if (allTransactions.length > 0) {
-        const dates = allTransactions.map(t => t.postedAt || t.createdAt).sort();
-        console.log(`[Mercury] Date range: ${dates[0]} to ${dates[dates.length - 1]}`);
+        const dates = allTransactions.map(t => t.postedAt || t.createdAt).filter(d => d).sort();
+        console.log(`[Mercury] ════════════════════════════════════════`);
+        console.log(`[Mercury] 📊 TOTAL FETCHED: ${allTransactions.length} transactions`);
+        console.log(`[Mercury] 📅 Date range: ${dates[0]} to ${dates[dates.length - 1]}`);
         
-        // Log oldest and newest
-        console.log(`[Mercury] Oldest transaction date: ${dates[0]}`);
-        console.log(`[Mercury] Newest transaction date: ${dates[dates.length - 1]}`);
+        // Log oldest and newest with full details
+        console.log(`[Mercury] 🗓️ Oldest: ${dates[0]}`);
+        console.log(`[Mercury] 🗓️ Newest: ${dates[dates.length - 1]}`);
+        
+        // Log transaction statuses breakdown
+        const statuses = allTransactions.reduce((acc, t) => {
+          acc[t.status] = (acc[t.status] || 0) + 1;
+          return acc;
+        }, {} as Record<string, number>);
+        console.log(`[Mercury] 📋 Transaction statuses:`, statuses);
+        
+        // Log PENDING transactions specifically (these might be recent!)
+        const pendingTxns = allTransactions.filter(t => t.status === 'pending');
+        if (pendingTxns.length > 0) {
+          console.log(`[Mercury] ⏳ PENDING TRANSACTIONS (${pendingTxns.length}):`);
+          pendingTxns.forEach((t, i) => {
+            console.log(`  ${i + 1}. ${t.createdAt} - ${t.counterpartyName} - $${Math.abs(t.amount)} (status: ${t.status})`);
+          });
+        } else {
+          console.log(`[Mercury] ⏳ No pending transactions found`);
+        }
+        
+        // Log 10 most recent by createdAt (not postedAt) to catch pending
+        const sortedByCreated = [...allTransactions].sort((a, b) => 
+          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        );
+        console.log(`[Mercury] 🕐 10 most recently CREATED:`);
+        sortedByCreated.slice(0, 10).forEach((t, i) => {
+          console.log(`  ${i + 1}. created:${t.createdAt?.split('T')[0]} posted:${t.postedAt?.split('T')[0] || 'PENDING'} - ${t.counterpartyName} - $${Math.abs(t.amount)}`);
+        });
+        console.log(`[Mercury] ════════════════════════════════════════`);
       }
 
       // Step 3: Filter based on expensesOnly flag
@@ -272,7 +392,22 @@ export const mercuryService = {
         ? allTransactions.filter(t => t.amount < 0)
         : allTransactions;
       
+      // Step 4: Sort by date (newest first) - use postedAt if available, fallback to createdAt
+      transactionsToReturn.sort((a, b) => {
+        const dateA = new Date(a.postedAt || a.createdAt).getTime();
+        const dateB = new Date(b.postedAt || b.createdAt).getTime();
+        return dateB - dateA; // Newest first
+      });
+      
       console.log(`[Mercury] Returning ${transactionsToReturn.length} transactions (expensesOnly: ${expensesOnly})`);
+      
+      // Log the 5 most recent transactions
+      if (transactionsToReturn.length > 0) {
+        console.log(`[Mercury] 5 most recent transactions:`);
+        transactionsToReturn.slice(0, 5).forEach((t, i) => {
+          console.log(`  ${i + 1}. ${t.postedAt || t.createdAt} - ${t.counterpartyName} - $${Math.abs(t.amount)}`);
+        });
+      }
 
       return this.mapMercuryToInternal(transactionsToReturn);
     } catch (error: any) {
