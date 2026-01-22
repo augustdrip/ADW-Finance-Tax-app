@@ -5,14 +5,16 @@ import { Transaction } from "../types";
 // This works both in production AND locally without needing to whitelist your home IP
 const MERCURY_API_BASE = "https://mercury-proxy.onrender.com/api/mercury";
 
-// Mercury API key can be set in .env.local as MERCURY_API_KEY
-// Or passed directly to the functions
-const ENV_MERCURY_KEY = process.env.MERCURY_API_KEY || '';
+// Mercury API key is stored in localStorage (user enters in Settings)
+function getMercuryKey(): string {
+  return localStorage.getItem('mercury_key') || '';
+}
 
-// Export to check if env key is configured
+// Export to check if key is configured
 export const hasMercuryEnvKey = () => {
-  if (ENV_MERCURY_KEY) {
-    console.log("[Mercury] Environment API key found.");
+  const key = getMercuryKey();
+  if (key) {
+    console.log("[Mercury] API key found in localStorage.");
     return true;
   }
   return false;
@@ -282,7 +284,7 @@ export const mercuryService = {
    * @param expensesOnly - If true, only return outgoing transactions (default: true for backward compatibility)
    */
   async fetchTransactions(apiKey?: string, expensesOnly: boolean = true): Promise<Transaction[]> {
-    const key = apiKey || ENV_MERCURY_KEY;
+    const key = apiKey || getMercuryKey();
     if (!key) throw new Error("Mercury API Key is required. Set MERCURY_API_KEY in .env.local or pass it directly.");
 
     try {
@@ -435,7 +437,7 @@ export const mercuryService = {
     creditPending: number;
     accounts: Array<{ name: string; type: string; balance: number }> 
   }> {
-    const key = apiKey || ENV_MERCURY_KEY;
+    const key = apiKey || getMercuryKey();
     
     // Fetch both accounts AND credit cards
     const [accounts, creditCards] = await Promise.all([
