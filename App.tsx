@@ -62,7 +62,8 @@ import {
   ExternalLink,
   ZoomIn,
   Unlink,
-  Link2
+  Link2,
+  Settings
 } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { jsPDF } from 'jspdf';
@@ -124,7 +125,7 @@ const App: React.FC = () => {
   const [isMercurySyncing, setIsMercurySyncing] = useState(false);
   const [isEnhancing, setIsEnhancing] = useState(false);
   const [isBulkAnalyzing, setIsBulkAnalyzing] = useState(false);
-  const [showModal, setShowModal] = useState<'transaction' | 'invoice' | 'agreement' | 'asset' | 'mercury' | 'receipt' | null>(null);
+  const [showModal, setShowModal] = useState<'transaction' | 'invoice' | 'agreement' | 'asset' | 'mercury' | 'receipt' | 'settings' | null>(null);
   const [viewingAsset, setViewingAsset] = useState<CompanyAsset | null>(null); // For image/document lightbox
   const [uploadPreview, setUploadPreview] = useState<string | null>(null); // Preview for asset upload
   const [receiptUploadTransaction, setReceiptUploadTransaction] = useState<Transaction | null>(null); // For receipt upload
@@ -169,6 +170,7 @@ const App: React.FC = () => {
   const [mercuryApiKey, setMercuryApiKey] = useState<string>(localStorage.getItem('mercury_key') || '');
   const [mercuryKeyError, setMercuryKeyError] = useState<string | null>(null);
   const [lastSyncTime, setLastSyncTime] = useState<string>(localStorage.getItem('mercury_sync') || 'Never');
+  const [geminiApiKey, setGeminiApiKey] = useState<string>(localStorage.getItem('gemini_api_key') || '');
   
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
   const [editingAgreement, setEditingAgreement] = useState<ClientAgreement | null>(null);
@@ -908,6 +910,9 @@ const App: React.FC = () => {
             </div>
             <button onClick={loadData} disabled={isSyncing} className="p-2 text-slate-500 hover:text-indigo-400 transition-colors">
               <RefreshCcw size={18} className={isSyncing ? 'animate-spin' : ''} />
+            </button>
+            <button onClick={() => setShowModal('settings')} className="p-2 text-slate-400 hover:text-white transition-colors" title="Settings">
+              <Settings size={18} />
             </button>
             <button className="p-2 text-slate-400 hover:text-white relative">
               <Bell size={18} />
@@ -2607,6 +2612,80 @@ const App: React.FC = () => {
           )}
         </div>
       </main>
+
+      {/* Settings Modal */}
+      {showModal === 'settings' && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/90 backdrop-blur-md" onClick={() => setShowModal(null)} />
+          <div className="bg-[#121216] border border-white/10 w-full max-w-lg rounded-[2.5rem] p-10 relative z-10 shadow-2xl max-h-[90vh] overflow-y-auto">
+            <button onClick={() => setShowModal(null)} className="absolute top-6 right-6 text-slate-500 hover:text-white"><X size={20} /></button>
+            
+            <div className="flex items-center gap-4 mb-8">
+              <div className="p-4 bg-indigo-600 rounded-2xl text-white">
+                <Settings size={28} />
+              </div>
+              <div>
+                <h3 className="text-xl font-black text-white">API Settings</h3>
+                <p className="text-xs text-slate-500">Configure your API connections</p>
+              </div>
+            </div>
+
+            <div className="space-y-6">
+              {/* Gemini API Key */}
+              <div className="p-5 bg-white/[0.02] border border-white/5 rounded-2xl space-y-3">
+                <div className="flex items-center gap-2">
+                  <Brain size={16} className="text-purple-400" />
+                  <span className="text-sm font-bold text-white">Gemini AI API Key</span>
+                  {geminiApiKey && <span className="text-[9px] px-2 py-0.5 bg-emerald-500/20 text-emerald-400 rounded-full font-bold">CONFIGURED</span>}
+                </div>
+                <p className="text-[11px] text-slate-500">Powers AI analysis, strategic summaries, and chat. Get a free key from <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener" className="text-indigo-400 hover:underline">Google AI Studio</a>.</p>
+                <input 
+                  type="password"
+                  value={geminiApiKey}
+                  onChange={(e) => {
+                    const key = e.target.value;
+                    setGeminiApiKey(key);
+                    localStorage.setItem('gemini_api_key', key);
+                    // Reset the AI client so it uses the new key
+                    import('./services/geminiService').then(m => m.resetGeminiClient());
+                  }}
+                  placeholder="AIza..."
+                  className="w-full bg-[#09090A] border border-white/10 rounded-xl py-3 px-4 text-sm text-white focus:border-purple-500 outline-none"
+                />
+              </div>
+
+              {/* Mercury API Key */}
+              <div className="p-5 bg-white/[0.02] border border-white/5 rounded-2xl space-y-3">
+                <div className="flex items-center gap-2">
+                  <LinkIcon size={16} className="text-indigo-400" />
+                  <span className="text-sm font-bold text-white">Mercury API Key</span>
+                  {mercuryApiKey && <span className="text-[9px] px-2 py-0.5 bg-emerald-500/20 text-emerald-400 rounded-full font-bold">CONFIGURED</span>}
+                </div>
+                <p className="text-[11px] text-slate-500">Syncs your bank transactions from Mercury. Get your API key from Mercury Dashboard → Settings → API.</p>
+                <input 
+                  type="password"
+                  value={mercuryApiKey}
+                  onChange={(e) => {
+                    const key = e.target.value;
+                    setMercuryApiKey(key);
+                    localStorage.setItem('mercury_key', key);
+                  }}
+                  placeholder="secret-token:..."
+                  className="w-full bg-[#09090A] border border-white/10 rounded-xl py-3 px-4 text-sm text-white focus:border-indigo-500 outline-none"
+                />
+              </div>
+
+              {/* Security Note */}
+              <div className="flex items-center gap-3 p-4 bg-emerald-500/5 border border-emerald-500/10 rounded-2xl">
+                <ShieldCheck size={18} className="text-emerald-500 shrink-0" />
+                <p className="text-[10px] text-slate-400">
+                  <span className="text-emerald-400 font-bold">Secure:</span> Keys are stored locally in your browser only. They are never sent to our servers.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Mercury Vault Modal */}
       {showModal === 'mercury' && (

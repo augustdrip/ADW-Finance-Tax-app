@@ -10,8 +10,30 @@ import {
   TAX_LIMITS_COMPARISON
 } from "../data/ircKnowledgeBase";
 
-// Always initialize GoogleGenAI with a named parameter using process.env.API_KEY directly.
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+// Get Gemini API key from localStorage (user enters it in settings)
+// This is more secure than bundling it in the code
+function getGeminiKey(): string {
+  return localStorage.getItem('gemini_api_key') || '';
+}
+
+// Create AI client lazily when needed
+let aiClient: GoogleGenAI | null = null;
+function getAI(): GoogleGenAI | null {
+  const key = getGeminiKey();
+  if (!key) {
+    console.warn('[Gemini] No API key configured. Set it in Settings.');
+    return null;
+  }
+  if (!aiClient) {
+    aiClient = new GoogleGenAI({ apiKey: key });
+  }
+  return aiClient;
+}
+
+// Reset client when key changes
+export function resetGeminiClient() {
+  aiClient = null;
+}
 
 // Generate a condensed IRC reference for the system prompt
 const IRC_QUICK_REFERENCE = IRC_KNOWLEDGE_BASE
@@ -131,6 +153,11 @@ INSTRUCTIONS:
 5. Suggest tax optimization strategies`;
   
   try {
+    const ai = getAI();
+    if (!ai) {
+      // Return offline IRC analysis if no API key
+      return analyzeTransactionIRC(transaction);
+    }
     const response = await ai.models.generateContent({
       model: "gemini-2.0-flash",
       contents: prompt,
@@ -193,6 +220,9 @@ INSTRUCTIONS:
 export { analyzeTransactionIRC, getCurrentYearLimits, TAX_LIMITS_COMPARISON };
 
 export const enhanceBusinessContext = async (context: string, vendor: string, amount: number): Promise<string> => {
+  const ai = getAI();
+  if (!ai) return context; // Return original if no API key
+  
   const prompt = `Enhance the following business context for an expenditure of $${amount} to ${vendor}. 
   Current context: "${context}"
   Rewrite this to maximize IRC § 162 (Ordinary and Necessary) or IRC § 41 (R&D) substantiation. 
@@ -376,6 +406,27 @@ Be specific and actionable. Focus on cost reduction and revenue growth.`;
     agreementCount: agreements.length
   });
 
+  const ai = getAI();
+  if (!ai) {
+    // Return a basic fallback summary without AI
+    return {
+      executiveSummary: `Financial analysis for ${currentMonth}: Total expenses $${totalExpenses.toLocaleString()}, Revenue $${totalRevenue.toLocaleString()}, Net ${netProfit >= 0 ? 'profit' : 'loss'} $${Math.abs(netProfit).toLocaleString()}. Configure Gemini API key in settings for detailed AI analysis.`,
+      totalRevenue,
+      totalExpenses,
+      netCashflow: netProfit,
+      checkingBalance: accountBalances?.checking || bankBalance,
+      savingsBalance: accountBalances?.savings || 0,
+      creditBalance: accountBalances?.credit || 0,
+      savingsOpportunities: [{ title: 'Add Gemini API key', description: 'Configure your API key in Settings for AI-powered insights', priority: 'High' as const, potentialSavings: 0 }],
+      revenueOpportunities: [],
+      taxInsights: { estimatedQuarterlyTax: estimatedSETax, potentialDeductions: 0, qbiDeduction: potentialQBI },
+      actionItems: ['Configure Gemini API key in Settings for full AI analysis'],
+      riskAlerts: [],
+      overallHealthScore: 50,
+      generatedAt: new Date().toISOString()
+    };
+  }
+
   try {
     const response = await ai.models.generateContent({
       model: "gemini-2.0-flash",
@@ -480,6 +531,12 @@ export const streamStrategyChat = async (
   businessContext: string,
   onChunk: (text: string) => void
 ) => {
+  const ai = getAI();
+  if (!ai) {
+    onChunk("⚠️ **Gemini API key not configured.**\n\nTo enable AI chat, please add your Gemini API key in Settings (gear icon in the header).\n\nYou can get a free API key from [Google AI Studio](https://aistudio.google.com/apikey).");
+    return;
+  }
+
   try {
     // We construct a single multi-turn prompt including the history and business context
     const historyText = history.map(m => `${m.role === 'user' ? 'CLIENT' : 'STRATEGIST'}: ${m.content}`).join('\n');

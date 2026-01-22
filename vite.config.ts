@@ -19,11 +19,10 @@ export default defineConfig(({ mode }) => {
         }
       },
       plugins: [react()],
-      define: {
-        'process.env.API_KEY': JSON.stringify(env.GEMINI_API_KEY),
-        'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY),
-        'process.env.MERCURY_API_KEY': JSON.stringify(env.MERCURY_API_KEY)
-      },
+      // NOTE: API keys are handled securely:
+      // - Mercury: Uses external proxy (mercury-proxy on Render)
+      // - Gemini: User enters key manually in UI (stored in localStorage)
+      // - Never expose secret keys in frontend bundle!
       resolve: {
         alias: {
           '@': path.resolve(__dirname, '.'),
