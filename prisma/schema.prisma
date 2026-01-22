@@ -8,48 +8,78 @@ datasource db {
 
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
 model agreements {
-  id            String   @id
-  clientName    String
-  effectiveDate String
-  status        String
-  scopeOfWork   String?
-  value         Decimal? @db.Decimal
-  attachments   Json?    @default("[]")
+  id             String   @id @default(uuid())
+  clientName     String
+  effectiveDate  String
+  expirationDate String?
+  status         String
+  scopeOfWork    String?
+  value          Decimal? @db.Decimal
+  notes          String?
+  attachments    Json?    @default("[]")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 }
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
 model assets {
-  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   name      String
   type      String
   url       String
   category  String
   dateAdded DateTime? @default(dbgenerated("CURRENT_DATE")) @db.Date
   size      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
 model invoices {
-  id            String  @id
+  id            String   @id @default(uuid())
   invoiceNumber String
   clientName    String
   issueDate     String
   dueDate       String
-  amount        Decimal @db.Decimal
+  amount        Decimal  @db.Decimal
   description   String?
   status        String
+  items         Json?    @default("[]")
+  notes         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 }
 
 /// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
 model transactions {
-  id          String  @id
-  date        String
-  vendor      String
-  amount      Decimal @db.Decimal
-  category    String
-  subCategory String?
-  context     String?
-  analysis    Json?
-  attachments Json?   @default("[]")
+  id           String   @id @default(uuid())
+  date         String
+  vendor       String
+  amount       Decimal  @db.Decimal
+  category     String
+  subCategory  String?
+  context      String?
+  analysis     Json?
+  attachments  Json?    @default("[]")
+  bankVerified Boolean  @default(false)
+  bankId       String?
+  madeBy       String?
+  receipts     Json?    @default("[]")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+/// Receipts from adw-receipts app
+model receipts {
+  id               String   @id @default(uuid())
+  file_path        String
+  public_url       String
+  created_at       DateTime @default(now())
+  transaction_id   String?
+  vendor_name      String?
+  amount           Decimal? @db.Decimal
+  receipt_date     String?
+  match_confidence String?
+  notes            String?
 }
