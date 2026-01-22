@@ -14,7 +14,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     // GET - Fetch all transactions
     if (req.method === 'GET') {
-      const transactions = await prisma.transaction.findMany({
+      const transactions = await prisma.transactions.findMany({
         orderBy: { date: 'desc' }
       });
       return res.status(200).json(transactions);
@@ -23,7 +23,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // POST - Create new transaction
     if (req.method === 'POST') {
       const data = req.body;
-      const transaction = await prisma.transaction.create({
+      const transaction = await prisma.transactions.create({
         data: {
           date: data.date,
           vendor: data.vendor,
@@ -43,7 +43,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // PUT - Update transaction
     if (req.method === 'PUT') {
       const { id, ...data } = req.body;
-      const transaction = await prisma.transaction.update({
+      const transaction = await prisma.transactions.update({
         where: { id },
         data: {
           date: data.date,
@@ -64,7 +64,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // DELETE - Delete transaction
     if (req.method === 'DELETE') {
       const { id } = req.body;
-      await prisma.transaction.delete({
+      await prisma.transactions.delete({
         where: { id }
       });
       return res.status(200).json({ success: true });

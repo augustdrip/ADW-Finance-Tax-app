@@ -13,7 +13,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     // GET - Fetch all invoices
     if (req.method === 'GET') {
-      const invoices = await prisma.invoice.findMany({
+      const invoices = await prisma.invoices.findMany({
         orderBy: { createdAt: 'desc' }
       });
       return res.status(200).json(invoices);
@@ -22,7 +22,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // POST - Create new invoice
     if (req.method === 'POST') {
       const data = req.body;
-      const invoice = await prisma.invoice.create({
+      const invoice = await prisma.invoices.create({
         data: {
           invoiceNumber: data.invoiceNumber || `INV-${Date.now()}`,
           clientName: data.clientName,
@@ -39,7 +39,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // PUT - Update invoice
     if (req.method === 'PUT') {
       const { id, ...data } = req.body;
-      const invoice = await prisma.invoice.update({
+      const invoice = await prisma.invoices.update({
         where: { id },
         data: {
           invoiceNumber: data.invoiceNumber,
@@ -57,7 +57,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // DELETE - Delete invoice
     if (req.method === 'DELETE') {
       const { id } = req.body;
-      await prisma.invoice.delete({
+      await prisma.invoices.delete({
         where: { id }
       });
       return res.status(200).json({ success: true });

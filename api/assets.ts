@@ -13,7 +13,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     // GET - Fetch all assets
     if (req.method === 'GET') {
-      const assets = await prisma.asset.findMany({
+      const assets = await prisma.assets.findMany({
         orderBy: { createdAt: 'desc' }
       });
       return res.status(200).json(assets);
@@ -22,7 +22,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // POST - Create new asset
     if (req.method === 'POST') {
       const data = req.body;
-      const asset = await prisma.asset.create({
+      const asset = await prisma.assets.create({
         data: {
           name: data.name,
           type: data.type,
@@ -38,7 +38,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // PUT - Update asset
     if (req.method === 'PUT') {
       const { id, ...data } = req.body;
-      const asset = await prisma.asset.update({
+      const asset = await prisma.assets.update({
         where: { id },
         data: {
           name: data.name,
@@ -55,7 +55,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // DELETE - Delete asset
     if (req.method === 'DELETE') {
       const { id } = req.body;
-      await prisma.asset.delete({
+      await prisma.assets.delete({
         where: { id }
       });
       return res.status(200).json({ success: true });

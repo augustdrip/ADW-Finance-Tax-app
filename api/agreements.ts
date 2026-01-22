@@ -13,7 +13,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     // GET - Fetch all agreements
     if (req.method === 'GET') {
-      const agreements = await prisma.agreement.findMany({
+      const agreements = await prisma.agreements.findMany({
         orderBy: { createdAt: 'desc' }
       });
       return res.status(200).json(agreements);
@@ -22,7 +22,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // POST - Create new agreement
     if (req.method === 'POST') {
       const data = req.body;
-      const agreement = await prisma.agreement.create({
+      const agreement = await prisma.agreements.create({
         data: {
           clientName: data.clientName,
           scopeOfWork: data.scopeOfWork,
@@ -40,7 +40,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // PUT - Update agreement
     if (req.method === 'PUT') {
       const { id, ...data } = req.body;
-      const agreement = await prisma.agreement.update({
+      const agreement = await prisma.agreements.update({
         where: { id },
         data: {
           clientName: data.clientName,
@@ -59,7 +59,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // DELETE - Delete agreement
     if (req.method === 'DELETE') {
       const { id } = req.body;
-      await prisma.agreement.delete({
+      await prisma.agreements.delete({
         where: { id }
       });
       return res.status(200).json({ success: true });
