@@ -78,6 +78,7 @@ const COMPANY_INFO = {
   address: "20830 Stevens Creek Blvd #1103, Cupertino, CA 95014",
   email: "Official@AgencyDevWorks.ai",
   bankName: "Evolve Bank & Trust via Mercury",
+  bankAddress: "695 Minna St, San Francisco, CA 94103",
   accountName: "Agency DevWorks",
   accountNumber: "202566543260",
   routingNumber: "091311229"
@@ -176,6 +177,7 @@ const App: React.FC = () => {
   const [editingAgreement, setEditingAgreement] = useState<ClientAgreement | null>(null);
   const [editingInvoice, setEditingInvoice] = useState<Invoice | null>(null);
   const [tempAttachments, setTempAttachments] = useState<Attachment[]>([]);
+  const [tempInvoiceAttachments, setTempInvoiceAttachments] = useState<Attachment[]>([]);
   const [notification, setNotification] = useState<{message: string, type: 'success' | 'alert'} | null>(null);
   
   const [currentMonth, setCurrentMonth] = useState<string>('all'); // Default to showing all transactions
@@ -197,7 +199,48 @@ const App: React.FC = () => {
   const [showFullSummary, setShowFullSummary] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const invoiceFileInputRef = useRef<HTMLInputElement>(null);
   const assetInputRef = useRef<HTMLInputElement>(null);
+  const creditCardCsvInputRef = useRef<HTMLInputElement>(null);
+  
+  // Credit card CSV upload handler
+  const handleCreditCardCSVUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    const cardName = prompt('Enter credit card name (e.g., "Chase Ink", "Amex Gold"):') || 'External Card';
+    
+    try {
+      const content = await file.text();
+      const newTransactions = mercuryService.parseCreditCardCSV(content, cardName);
+      
+      if (newTransactions.length === 0) {
+        setNotification({ message: 'No transactions found in CSV. Check format.', type: 'error' });
+        return;
+      }
+      
+      // Add to existing transactions (avoiding duplicates by vendor+date+amount)
+      setTransactions(prev => {
+        const existingKeys = new Set(prev.map(t => `${t.vendor}_${t.date}_${t.amount}`));
+        const uniqueNew = newTransactions.filter(t => !existingKeys.has(`${t.vendor}_${t.date}_${t.amount}`));
+        const updated = [...prev, ...uniqueNew];
+        
+        // Save credit card transactions separately
+        const ccTransactions = updated.filter(t => t.context?.includes('Credit Card'));
+        localStorage.setItem('creditcard_transactions', JSON.stringify(ccTransactions));
+        
+        return updated;
+      });
+      
+      setNotification({ message: `Imported ${newTransactions.length} transactions from ${cardName}!`, type: 'success' });
+    } catch (error) {
+      console.error('CSV parse error:', error);
+      setNotification({ message: 'Failed to parse CSV file', type: 'error' });
+    }
+    
+    // Reset input
+    e.target.value = '';
+  };
   const modalFormRef = useRef<HTMLFormElement>(null);
 
   const loadData = async () => {
@@ -205,11 +248,13 @@ const App: React.FC = () => {
     try {
       // Load from localStorage first (most reliable)
       const savedMercuryTransactions = localStorage.getItem('mercury_transactions');
+      const savedCreditCardTransactions = localStorage.getItem('creditcard_transactions');
       const savedAgreements = localStorage.getItem('agreements');
       const savedInvoices = localStorage.getItem('invoices');
       const savedAssets = localStorage.getItem('assets');
       
       const mercuryTransactions = savedMercuryTransactions ? JSON.parse(savedMercuryTransactions) : [];
+      const creditCardTransactions = savedCreditCardTransactions ? JSON.parse(savedCreditCardTransactions) : [];
       const localAgreements = savedAgreements ? JSON.parse(savedAgreements) : [];
       const localInvoices = savedInvoices ? JSON.parse(savedInvoices) : [];
       const localAssets = savedAssets ? JSON.parse(savedAssets) : [];
@@ -225,10 +270,13 @@ const App: React.FC = () => {
       // Combine Supabase data with localStorage data (localStorage takes priority)
       const supabaseTransactions = tData?.length ? tData : MOCK_DATA.transactions as any;
       
-      // Merge: localStorage Mercury transactions + Supabase/mock data (avoiding duplicates)
-      const existingIds = new Set(mercuryTransactions.map((t: any) => t.id));
+      // Merge: localStorage Mercury transactions + Credit Card + Supabase/mock data (avoiding duplicates)
+      const existingIds = new Set([
+        ...mercuryTransactions.map((t: any) => t.id),
+        ...creditCardTransactions.map((t: any) => t.id)
+      ]);
       const uniqueSupabase = supabaseTransactions.filter((t: any) => !existingIds.has(t.id));
-      const allTransactions = [...mercuryTransactions, ...uniqueSupabase];
+      const allTransactions = [...mercuryTransactions, ...creditCardTransactions, ...uniqueSupabase];
       
       setTransactions(allTransactions);
       
@@ -243,12 +291,15 @@ const App: React.FC = () => {
       console.error("Load Error:", e);
       // Fallback to localStorage then mock data
       const savedMercuryTransactions = localStorage.getItem('mercury_transactions');
+      const savedCreditCardTransactions = localStorage.getItem('creditcard_transactions');
       const savedAgreements = localStorage.getItem('agreements');
       const savedInvoices = localStorage.getItem('invoices');
       const savedAssets = localStorage.getItem('assets');
       
       const mercuryTransactions = savedMercuryTransactions ? JSON.parse(savedMercuryTransactions) : [];
-      setTransactions(mercuryTransactions.length ? mercuryTransactions : MOCK_DATA.transactions as any);
+      const creditCardTransactions = savedCreditCardTransactions ? JSON.parse(savedCreditCardTransactions) : [];
+      const allTxns = [...mercuryTransactions, ...creditCardTransactions];
+      setTransactions(allTxns.length ? allTxns : MOCK_DATA.transactions as any);
       setAgreements(savedAgreements ? JSON.parse(savedAgreements) : MOCK_DATA.agreements as any);
       setInvoices(savedInvoices ? JSON.parse(savedInvoices) : MOCK_DATA.invoices as any);
       setAssets(savedAssets ? JSON.parse(savedAssets) : MOCK_DATA.assets as any);
@@ -353,13 +404,42 @@ const App: React.FC = () => {
     };
   }, [transactions, lastSyncTime, bankBalance]);
 
+  // Chart data from REAL transactions - grouped by month
   const chartData = useMemo(() => {
-    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'];
-    return months.map((month, i) => {
-      const expenditure = 15000 + (Math.random() * 10000);
-      const shield = expenditure * (0.6 + (Math.random() * 0.2));
-      return { name: month, expenditure, shield };
+    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const currentYear = new Date().getFullYear();
+    
+    // Group transactions by month
+    const monthlyData: Record<string, { expenditure: number; shield: number }> = {};
+    
+    // Initialize all months of current year
+    monthNames.forEach((month, idx) => {
+      monthlyData[month] = { expenditure: 0, shield: 0 };
     });
+    
+    // Calculate actual expenditure and tax shield per month
+    transactions.forEach(t => {
+      const txDate = new Date(t.date);
+      if (txDate.getFullYear() === currentYear) {
+        const monthName = monthNames[txDate.getMonth()];
+        monthlyData[monthName].expenditure += t.amount;
+        // Tax shield = deductible amount (from AI analysis) or estimate at 60% if not analyzed
+        const deductible = t.analysis?.deductibleAmount || (t.amount * 0.6);
+        monthlyData[monthName].shield += deductible;
+      }
+    });
+    
+    // Return only months with data, or last 6 months if no data
+    const monthsWithData = monthNames.filter(m => monthlyData[m].expenditure > 0);
+    const displayMonths = monthsWithData.length > 0 
+      ? monthNames.slice(0, new Date().getMonth() + 1) // Show Jan to current month
+      : monthNames.slice(0, 6); // Default to first 6 months
+    
+    return displayMonths.map(month => ({
+      name: month,
+      expenditure: Math.round(monthlyData[month].expenditure),
+      shield: Math.round(monthlyData[month].shield)
+    }));
   }, [transactions]);
 
   // Schedule C line item mapping - maps expense categories to IRS Schedule C lines
@@ -832,6 +912,212 @@ const App: React.FC = () => {
     doc.save(`Tax_Synthesis_${taxSummary.year}.pdf`);
   };
 
+  // Generate Professional Invoice PDF - Matching Agency Dev Works format
+  const generateInvoicePDF = async (invoice: Invoice) => {
+    const doc = new jsPDF();
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const leftMargin = 20;
+    const rightMargin = pageWidth - 20;
+    let y = 15;
+
+    // ==================== LOGO ====================
+    try {
+      const logoImg = new Image();
+      logoImg.crossOrigin = 'anonymous';
+      logoImg.src = '/assets/branding/ADW%20LOGO.png';
+      await new Promise<void>((resolve, reject) => {
+        logoImg.onload = () => resolve();
+        logoImg.onerror = () => reject();
+        setTimeout(() => reject(), 3000);
+      });
+      doc.addImage(logoImg, 'PNG', leftMargin, y, 20, 20);
+      y += 25;
+    } catch {
+      y += 5;
+    }
+
+    // ==================== HEADER ====================
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(22);
+    doc.setTextColor(0, 0, 0);
+    doc.text('INVOICE', leftMargin, y);
+    y += 8;
+
+    // Horizontal line
+    doc.setDrawColor(0, 0, 0);
+    doc.setLineWidth(0.5);
+    doc.line(leftMargin, y, rightMargin, y);
+    y += 10;
+
+    // ==================== COMPANY INFO ====================
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(14);
+    doc.text('Agency DevWorks', leftMargin, y);
+    y += 5;
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+    doc.setTextColor(60, 60, 60);
+    doc.text(COMPANY_INFO.address, leftMargin, y);
+    y += 4;
+    doc.text(`Email: ${COMPANY_INFO.email}`, leftMargin, y);
+    y += 12;
+
+    // ==================== BILL TO SECTION ====================
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(11);
+    doc.setTextColor(0, 0, 0);
+    doc.text('Bill To:', leftMargin, y);
+    y += 5;
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+    doc.setTextColor(60, 60, 60);
+    doc.text(invoice.clientName, leftMargin, y);
+    
+    // Invoice Date and Number - Right aligned
+    const invoiceDateFormatted = new Date(invoice.issueDate).toLocaleDateString('en-US', { 
+      year: 'numeric', month: 'long', day: 'numeric' 
+    });
+    doc.text(`Invoice Date: ${invoiceDateFormatted}`, rightMargin, y - 5, { align: 'right' });
+    doc.text(`Invoice Number: ${invoice.invoiceNumber}`, rightMargin, y, { align: 'right' });
+    
+    y += 12;
+
+    // ==================== DESCRIPTION TABLE ====================
+    const tableTop = y;
+    const tableWidth = rightMargin - leftMargin;
+    const descColWidth = tableWidth * 0.75;
+    const amountColWidth = tableWidth * 0.25;
+    const rowHeight = 10;
+
+    // Table Header
+    doc.setFillColor(240, 240, 240);
+    doc.rect(leftMargin, tableTop, tableWidth, rowHeight, 'F');
+    
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(10);
+    doc.setTextColor(0, 0, 0);
+    doc.text('Description', leftMargin + 3, tableTop + 7);
+    doc.text('Amount', leftMargin + descColWidth + amountColWidth/2, tableTop + 7, { align: 'center' });
+
+    doc.setDrawColor(180, 180, 180);
+    doc.setLineWidth(0.2);
+    doc.rect(leftMargin, tableTop, tableWidth, rowHeight);
+    doc.line(leftMargin + descColWidth, tableTop, leftMargin + descColWidth, tableTop + rowHeight);
+
+    // Description Row
+    const rowTop = tableTop + rowHeight;
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+    doc.setTextColor(60, 60, 60);
+    
+    const descLines = doc.splitTextToSize(invoice.description, descColWidth - 6);
+    const contentRowHeight = Math.max(rowHeight, descLines.length * 5 + 4);
+    
+    doc.rect(leftMargin, rowTop, tableWidth, contentRowHeight);
+    doc.line(leftMargin + descColWidth, rowTop, leftMargin + descColWidth, rowTop + contentRowHeight);
+    doc.text(descLines, leftMargin + 3, rowTop + 6);
+    doc.text(`$${invoice.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}`, leftMargin + descColWidth + amountColWidth/2, rowTop + 6, { align: 'center' });
+
+    y = rowTop + contentRowHeight;
+
+    // Subtotal Row
+    doc.setFillColor(250, 250, 250);
+    doc.rect(leftMargin, y, tableWidth, rowHeight, 'F');
+    doc.rect(leftMargin, y, tableWidth, rowHeight);
+    doc.line(leftMargin + descColWidth, y, leftMargin + descColWidth, y + rowHeight);
+    
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(0, 0, 0);
+    doc.text('Subtotal:', leftMargin + descColWidth - 3, y + 7, { align: 'right' });
+    doc.text(`$${invoice.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}`, leftMargin + descColWidth + amountColWidth/2, y + 7, { align: 'center' });
+    y += rowHeight;
+
+    // Total Row
+    doc.setFillColor(240, 240, 240);
+    doc.rect(leftMargin, y, tableWidth, rowHeight, 'F');
+    doc.rect(leftMargin, y, tableWidth, rowHeight);
+    doc.line(leftMargin + descColWidth, y, leftMargin + descColWidth, y + rowHeight);
+    
+    doc.setFont("helvetica", "bold");
+    doc.text('Total:', leftMargin + descColWidth - 3, y + 7, { align: 'right' });
+    doc.text(`$${invoice.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}`, leftMargin + descColWidth + amountColWidth/2, y + 7, { align: 'center' });
+    y += rowHeight + 10;
+
+    // ==================== THANK YOU MESSAGE ====================
+    doc.setFont("helvetica", "italic");
+    doc.setFontSize(11);
+    doc.setTextColor(80, 80, 80);
+    doc.text('Thank you for your business!', leftMargin, y);
+    y += 12;
+
+    // ==================== PAYMENT INFORMATION ====================
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(12);
+    doc.setTextColor(0, 0, 0);
+    doc.text('Payment Information', leftMargin, y);
+    y += 8;
+
+    // ACH & Wire Information
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(10);
+    doc.setTextColor(40, 40, 40);
+    doc.text('ACH & Wire Information', leftMargin, y);
+    y += 4;
+    doc.setDrawColor(100, 100, 100);
+    doc.setLineWidth(0.2);
+    doc.line(leftMargin, y, leftMargin + 45, y);
+    y += 6;
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(9);
+    doc.setTextColor(80, 80, 80);
+    doc.text('PAYMENT REMITTANCE INSTRUCTIONS', leftMargin, y);
+    y += 6;
+
+    // Bank Details - Compact
+    doc.setFontSize(9);
+    doc.setTextColor(60, 60, 60);
+    
+    const bankDetails = [
+      { label: 'Bank Account Name:', value: COMPANY_INFO.accountName },
+      { label: 'Bank Account Address:', value: COMPANY_INFO.bankAddress },
+      { label: 'Bank Name:', value: COMPANY_INFO.bankName },
+      { label: 'Account Number:', value: COMPANY_INFO.accountNumber },
+      { label: 'Routing Number:', value: COMPANY_INFO.routingNumber }
+    ];
+
+    bankDetails.forEach(detail => {
+      doc.setFont("helvetica", "bold");
+      doc.text(detail.label, leftMargin, y);
+      doc.setFont("helvetica", "normal");
+      doc.text(detail.value, leftMargin + 42, y);
+      y += 5;
+    });
+
+    y += 6;
+
+    // Pay by Card Section
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(10);
+    doc.setTextColor(40, 40, 40);
+    doc.text('Pay by Card (3% fee)', leftMargin, y);
+    y += 4;
+    doc.line(leftMargin, y, leftMargin + 40, y);
+    y += 6;
+
+    const cardAmount = invoice.amount * 1.03;
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.setTextColor(60, 60, 60);
+    doc.text(`Amount: $${cardAmount.toLocaleString('en-US', { minimumFractionDigits: 2 })}`, leftMargin, y);
+
+    // Save PDF
+    doc.save(`Invoice_${invoice.clientName.replace(/\s+/g, '_')}_${invoice.issueDate.replace(/-/g, '_')}.pdf`);
+    setNotification({ message: 'Invoice PDF generated!', type: 'success' });
+  };
+
   const Logo = () => (
     <div className="flex items-center gap-3">
       <div className="relative w-10 h-10 flex items-center justify-center">
@@ -943,14 +1229,9 @@ const App: React.FC = () => {
                         Strategist analysis detected 3 high-probability tax deductions waiting for verification. Increase Audit Shield to 98% with one click.
                       </p>
                     </div>
-                    <div className="flex gap-4">
-                      <div className="flex flex-col items-center bg-[#09090A]/40 backdrop-blur-md p-4 rounded-2xl border border-white/5 min-w-[120px]">
-                        <span className="text-lg font-black text-emerald-400">$4,250</span>
-                        <span className="text-[8px] font-bold text-slate-500 uppercase tracking-widest">Potential Shield</span>
-                      </div>
-                      <button className="bg-indigo-600 hover:bg-indigo-500 text-white px-6 py-4 rounded-2xl text-xs font-black uppercase shadow-lg shadow-indigo-600/20 transition-all active:scale-95 flex items-center gap-2">
-                        Apply Strategies <ChevronRight size={16} />
-                      </button>
+                    <div className="flex flex-col items-center bg-[#09090A]/40 backdrop-blur-md p-4 rounded-2xl border border-white/5 min-w-[120px]">
+                      <span className="text-lg font-black text-emerald-400">$4,250</span>
+                      <span className="text-[8px] font-bold text-slate-500 uppercase tracking-widest">Potential Shield</span>
                     </div>
                   </div>
                 </div>
@@ -999,169 +1280,276 @@ const App: React.FC = () => {
                    </div>
                 </div>
 
-                {/* Mercury Credit Card Balance - styled like Mercury */}
-                <div className="bg-[#121216] border border-indigo-500/20 rounded-[2rem] p-8 shadow-2xl relative overflow-hidden group">
+                {/* Mercury Credit Card */}
+                <div className="bg-[#121216] border border-indigo-500/20 rounded-[2rem] p-6 shadow-2xl relative overflow-hidden group">
+                   <div className="absolute inset-0 bg-gradient-to-br from-indigo-600/5 to-purple-600/5 opacity-0 group-hover:opacity-100 transition-opacity"></div>
                    <div className="relative z-10 space-y-4">
                       <div className="flex justify-between items-start">
-                        <div className="flex items-center gap-3">
-                          <div className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Credit Card</div>
+                        <div className="flex items-center gap-2">
+                          <div className="p-2 bg-indigo-600/20 rounded-xl">
+                            <CreditCard size={16} className="text-indigo-400" />
+                          </div>
+                          <div>
+                            <div className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Mercury Credit</div>
+                            <div className="text-[9px] text-indigo-400 font-medium">IO Mastercard®</div>
+                          </div>
                         </div>
-                        <div className="p-2 bg-indigo-600/20 rounded-xl">
-                          <CreditCard size={18} className="text-indigo-400" />
-                        </div>
+                        {accountBalances.credit > 0 && (
+                          <div className="px-2 py-1 bg-emerald-500/10 rounded-lg">
+                            <span className="text-[8px] text-emerald-400 font-bold uppercase">Active</span>
+                          </div>
+                        )}
                       </div>
                       
-                      {accountBalances.credit > 0 || accountBalances.creditAvailable > 0 ? (
+                      {/* Current Balance */}
+                      {(accountBalances.credit > 0 || accountBalances.creditAvailable > 0) ? (
                         <>
                           <div>
+                            <div className="text-[9px] text-slate-500 mb-1">Current Balance</div>
                             <div className="text-3xl font-black text-white">
                               ${Math.floor(accountBalances.credit).toLocaleString()}
                               <span className="text-lg text-slate-500">.{((accountBalances.credit % 1) * 100).toFixed(0).padStart(2, '0')}</span>
                             </div>
                           </div>
                           
-                          {/* Credit usage bar */}
+                          {/* Credit Limit Bar */}
                           <div className="space-y-2">
-                            <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
+                            <div className="h-2.5 bg-slate-800/80 rounded-full overflow-hidden">
                               <div 
-                                className="h-full bg-gradient-to-r from-indigo-500 to-indigo-400 rounded-full transition-all duration-500"
+                                className="h-full bg-gradient-to-r from-indigo-500 via-purple-500 to-indigo-400 rounded-full transition-all duration-700 ease-out"
                                 style={{ width: `${accountBalances.creditLimit > 0 ? Math.min((accountBalances.credit / accountBalances.creditLimit) * 100, 100) : 0}%` }}
                               ></div>
                             </div>
-                            <div className="flex justify-between text-[9px]">
-                              <div className="flex items-center gap-2">
-                                <span className="flex items-center gap-1">
-                                  <span className="w-2 h-2 rounded-full bg-indigo-500"></span>
-                                  <span className="text-slate-400">Balance</span>
-                                </span>
-                                {accountBalances.creditPending > 0 && (
-                                  <span className="flex items-center gap-1">
-                                    <span className="w-2 h-2 rounded-full bg-amber-500"></span>
-                                    <span className="text-slate-400">Pending</span>
-                                  </span>
-                                )}
-                              </div>
+                            <div className="flex justify-between items-center text-[9px]">
+                              <span className="text-slate-500">
+                                {accountBalances.creditLimit > 0 
+                                  ? `${((accountBalances.credit / accountBalances.creditLimit) * 100).toFixed(0)}% utilized`
+                                  : 'Credit utilized'}
+                              </span>
                               <span className="text-emerald-400 font-bold">
                                 ${accountBalances.creditAvailable.toLocaleString()} available
                               </span>
                             </div>
                           </div>
+
+                          {/* Credit Card Transactions Count */}
+                          <div className="flex items-center justify-between p-3 bg-white/[0.02] rounded-xl border border-white/5">
+                            <div className="flex items-center gap-2">
+                              <Activity size={12} className="text-indigo-400" />
+                              <span className="text-[9px] text-slate-400">Card Transactions</span>
+                            </div>
+                            <span className="text-sm font-bold text-white">
+                              {transactions.filter(t => t.context?.includes('Credit Card') || (t as any).isCreditCard || (t as any).source === 'mercury_credit').length}
+                            </span>
+                          </div>
+
+                          {/* Credit Limit Info */}
+                          <div className="pt-3 border-t border-white/5 flex justify-between items-center">
+                            <div className="text-[9px] text-slate-500">
+                              <span className="text-slate-600">Limit:</span> ${accountBalances.creditLimit.toLocaleString()}
+                            </div>
+                            <button 
+                              onClick={() => handleMercurySync()}
+                              className="text-[9px] text-indigo-400 hover:text-indigo-300 font-bold flex items-center gap-1"
+                            >
+                              <RefreshCcw size={10} />
+                              Sync Transactions
+                            </button>
+                          </div>
                         </>
                       ) : (
-                        <div className="text-center py-4">
-                          <div className="text-2xl font-black text-slate-600">$0.00</div>
-                          <div className="text-[10px] text-slate-500 mt-2">
-                            No credit card balance found.<br/>
-                            Sync Mercury to load credit card data.
+                        <div className="text-center py-6">
+                          <CreditCard size={32} className="mx-auto mb-3 text-slate-700" />
+                          <div className="text-slate-500 text-xs mb-3">
+                            No credit card data found
+                          </div>
+                          <button 
+                            onClick={() => handleMercurySync()}
+                            className="px-4 py-2 bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/30 rounded-xl text-xs font-bold text-indigo-400 flex items-center justify-center gap-2 mx-auto transition-all"
+                          >
+                            <RefreshCcw size={12} />
+                            Sync Mercury
+                          </button>
+                          <div className="text-[9px] text-slate-600 mt-3">
+                            Click sync to load your Mercury credit card
                           </div>
                         </div>
                       )}
-                      
-                      <div className="pt-3 border-t border-white/5 flex justify-between items-center">
-                        <div className="flex items-center gap-2 text-[9px] text-slate-500">
-                          <CreditCard size={12} />
-                          <span>Mercury Credit Card</span>
-                        </div>
-                        <span className="text-[9px] text-slate-500">
-                          {lastSyncTime !== 'Never' ? `Last sync: ${lastSyncTime}` : 'Not synced'}
-                        </span>
-                      </div>
                    </div>
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
                 {[
-                  { label: 'Expenditures', value: `$${stats.totalSpent.toLocaleString()}`, icon: Receipt, trend: '+12%', color: 'text-white' },
-                  { label: 'Potential Deductions', value: `$${stats.totalPotentialDeductions.toLocaleString()}`, icon: Scale, trend: '+5.2%', color: 'text-emerald-400' },
-                  { label: 'Projected Tax Savings', value: `$${stats.projectedTaxSavings.toLocaleString()}`, icon: TrendingUp, trend: 'Optimal', color: 'text-indigo-400' },
-                  { label: 'Strategy Score', value: `${stats.optimizationScore}%`, icon: Sparkles, trend: 'Shield Active', color: 'text-white' },
+                  { label: 'Expenditures', value: `$${stats.totalSpent.toLocaleString()}`, icon: Receipt, trend: '+12%', color: 'text-white', highlight: false },
+                  { label: 'Mercury CC', value: `$${accountBalances.credit.toLocaleString()}`, icon: CreditCard, trend: `$${accountBalances.creditAvailable.toLocaleString()} avail`, color: 'text-indigo-400', highlight: false },
+                  { label: 'Potential Deductions', value: `$${stats.totalPotentialDeductions.toLocaleString()}`, icon: Scale, trend: '+5.2%', color: 'text-emerald-400', highlight: true },
+                  { label: 'Projected Tax Savings', value: `$${stats.projectedTaxSavings.toLocaleString()}`, icon: TrendingUp, trend: 'Optimal', color: 'text-purple-400', highlight: false },
+                  { label: 'Strategy Score', value: `${stats.optimizationScore}%`, icon: Sparkles, trend: 'Shield Active', color: 'text-white', highlight: false },
                 ].map((stat, i) => (
-                  <div key={i} className="bg-[#121216] border border-white/5 p-6 rounded-3xl hover:border-indigo-500/30 transition-all group relative overflow-hidden">
-                    <div className="absolute top-0 right-0 w-24 h-24 bg-indigo-500/5 blur-3xl -mr-12 -mt-12 group-hover:bg-indigo-500/10 transition-all"></div>
-                    <div className="flex justify-between items-start mb-6">
-                      <div className="p-3 bg-white/5 rounded-2xl group-hover:scale-110 transition-transform">
-                        <stat.icon size={20} className="text-indigo-500" />
+                  <div key={i} className="bg-[#121216] border border-white/5 p-5 rounded-2xl hover:border-indigo-500/30 transition-all group relative overflow-hidden">
+                    <div className="absolute top-0 right-0 w-20 h-20 bg-indigo-500/5 blur-3xl -mr-10 -mt-10 group-hover:bg-indigo-500/10 transition-all"></div>
+                    <div className="flex justify-between items-start mb-4">
+                      <div className="p-2 bg-white/5 rounded-xl group-hover:scale-110 transition-transform">
+                        <stat.icon size={16} className="text-indigo-500" />
                       </div>
-                      <span className={`text-[9px] font-black px-2 py-1 rounded-lg ${i === 1 ? 'bg-emerald-500/10 text-emerald-500' : 'bg-white/5 text-slate-500'} uppercase tracking-widest`}>
+                      <span className={`text-[8px] font-black px-2 py-1 rounded-lg ${stat.highlight ? 'bg-emerald-500/10 text-emerald-500' : 'bg-white/5 text-slate-500'} uppercase tracking-widest`}>
                         {stat.trend}
                       </span>
                     </div>
-                    <div className={`text-2xl font-black mb-1 ${stat.color}`}>{stat.value}</div>
-                    <div className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">{stat.label}</div>
+                    <div className={`text-xl font-black mb-1 ${stat.color}`}>{stat.value}</div>
+                    <div className="text-[9px] text-slate-500 font-bold uppercase tracking-widest">{stat.label}</div>
                   </div>
                 ))}
               </div>
 
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                 <div className="lg:col-span-2 space-y-6">
-                  <div className="bg-[#121216] border border-white/5 rounded-[2.5rem] p-8 shadow-2xl space-y-8 overflow-hidden relative">
-                    <div className="flex justify-between items-center">
+                  <div className="bg-[#121216] border border-white/5 rounded-2xl p-6 shadow-2xl overflow-hidden relative">
+                    {/* Header */}
+                    <div className="flex justify-between items-start mb-6">
                       <div>
-                        <h3 className="font-black text-white text-sm uppercase tracking-[0.2em] flex items-center gap-2">
-                          <Waves size={18} className="text-indigo-500" /> Fiscal Shield Trajectory
+                        <h3 className="font-black text-white text-sm flex items-center gap-2">
+                          <div className="p-1.5 bg-indigo-500/20 rounded-lg">
+                            <ShieldCheck size={14} className="text-indigo-400" />
+                          </div>
+                          Tax Shield Analysis
                         </h3>
-                        <p className="text-[10px] text-slate-500 font-bold uppercase mt-1">Projecting Expenditure vs Substantiated Tax Breakpoints</p>
+                        <p className="text-[10px] text-slate-500 mt-1">Monthly spending vs tax-deductible amounts ({taxSummary.year})</p>
                       </div>
-                      <div className="flex gap-2">
-                        <div className="flex items-center gap-1.5 px-3 py-1.5 bg-white/5 rounded-full border border-white/5">
-                           <div className="w-2 h-2 rounded-full bg-indigo-500"></div>
-                           <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Expenditure</span>
+                      <div className="flex flex-col gap-1.5">
+                        <div className="flex items-center gap-2 text-[9px]">
+                          <div className="w-3 h-1 rounded-full bg-indigo-500"></div>
+                          <span className="text-slate-400">Total Spent</span>
+                          <span className="text-white font-bold">${chartData.reduce((a, b) => a + b.expenditure, 0).toLocaleString()}</span>
                         </div>
-                        <div className="flex items-center gap-1.5 px-3 py-1.5 bg-white/5 rounded-full border border-white/5">
-                           <div className="w-2 h-2 rounded-full bg-emerald-400"></div>
-                           <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Tax Shield</span>
+                        <div className="flex items-center gap-2 text-[9px]">
+                          <div className="w-3 h-1 rounded-full bg-emerald-400"></div>
+                          <span className="text-slate-400">Tax Deductible</span>
+                          <span className="text-emerald-400 font-bold">${chartData.reduce((a, b) => a + b.shield, 0).toLocaleString()}</span>
                         </div>
                       </div>
                     </div>
 
-                    <div className="h-[300px] w-full">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <AreaChart data={chartData}>
-                          <defs>
-                            <linearGradient id="colorExp" x1="0" y1="0" x2="0" y2="1">
-                              <stop offset="5%" stopColor="#6366f1" stopOpacity={0.3}/>
-                              <stop offset="95%" stopColor="#6366f1" stopOpacity={0}/>
-                            </linearGradient>
-                            <linearGradient id="colorShield" x1="0" y1="0" x2="0" y2="1">
-                              <stop offset="5%" stopColor="#34d399" stopOpacity={0.3}/>
-                              <stop offset="95%" stopColor="#34d399" stopOpacity={0}/>
-                            </linearGradient>
-                          </defs>
-                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(255,255,255,0.03)" />
-                          <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 10, fontWeight: 700 }} dy={10} />
-                          <YAxis axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 10, fontWeight: 700 }} tickFormatter={(value) => `$${value / 1000}k`} />
-                          <Tooltip contentStyle={{ backgroundColor: '#121216', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '16px', fontSize: '10px' }} itemStyle={{ fontWeight: 700 }} />
-                          <Area type="monotone" dataKey="expenditure" stroke="#6366f1" strokeWidth={4} fillOpacity={1} fill="url(#colorExp)" />
-                          <Area type="monotone" dataKey="shield" stroke="#34d399" strokeWidth={4} fillOpacity={1} fill="url(#colorShield)" />
-                        </AreaChart>
-                      </ResponsiveContainer>
+                    {/* Chart */}
+                    <div className="h-[220px] w-full">
+                      {chartData.some(d => d.expenditure > 0) ? (
+                        <ResponsiveContainer width="100%" height="100%">
+                          <AreaChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                            <defs>
+                              <linearGradient id="colorExp" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="5%" stopColor="#6366f1" stopOpacity={0.4}/>
+                                <stop offset="95%" stopColor="#6366f1" stopOpacity={0.05}/>
+                              </linearGradient>
+                              <linearGradient id="colorShield" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="5%" stopColor="#34d399" stopOpacity={0.4}/>
+                                <stop offset="95%" stopColor="#34d399" stopOpacity={0.05}/>
+                              </linearGradient>
+                            </defs>
+                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(255,255,255,0.03)" />
+                            <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 9, fontWeight: 600 }} dy={5} />
+                            <YAxis axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 9, fontWeight: 600 }} tickFormatter={(value) => value >= 1000 ? `$${(value / 1000).toFixed(0)}k` : `$${value}`} />
+                            <Tooltip 
+                              contentStyle={{ backgroundColor: '#18181c', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px', fontSize: '11px', padding: '12px' }} 
+                              itemStyle={{ fontWeight: 600 }}
+                              formatter={(value: number, name: string) => [`$${value.toLocaleString()}`, name === 'expenditure' ? 'Spent' : 'Deductible']}
+                              labelStyle={{ fontWeight: 700, marginBottom: 4 }}
+                            />
+                            <Area type="monotone" dataKey="expenditure" name="expenditure" stroke="#6366f1" strokeWidth={2.5} fillOpacity={1} fill="url(#colorExp)" />
+                            <Area type="monotone" dataKey="shield" name="shield" stroke="#34d399" strokeWidth={2.5} fillOpacity={1} fill="url(#colorShield)" />
+                          </AreaChart>
+                        </ResponsiveContainer>
+                      ) : (
+                        <div className="h-full flex flex-col items-center justify-center text-center">
+                          <ShieldCheck size={32} className="text-slate-700 mb-3" />
+                          <p className="text-xs text-slate-500 mb-2">No transaction data yet</p>
+                          <button 
+                            onClick={() => mercuryApiKey ? handleMercurySync() : setShowModal('settings')}
+                            className="text-[10px] text-indigo-400 hover:text-indigo-300 font-bold"
+                          >
+                            {mercuryApiKey ? 'Sync from Mercury' : 'Connect Mercury Bank →'}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Explanation Footer */}
+                    <div className="mt-4 pt-4 border-t border-white/5 flex items-start gap-3">
+                      <Info size={14} className="text-slate-500 mt-0.5 shrink-0" />
+                      <p className="text-[9px] text-slate-500 leading-relaxed">
+                        <span className="text-slate-400 font-semibold">How it works:</span> The purple line shows your total monthly spending. 
+                        The green line shows the portion that's tax-deductible based on AI analysis (or estimated at 60% if not analyzed). 
+                        The gap between them represents non-deductible expenses.
+                      </p>
                     </div>
                   </div>
 
-                  <div className="bg-[#121216] border border-white/5 rounded-[2.5rem] p-8 space-y-6 shadow-2xl">
-                    <div className="flex justify-between items-center">
-                       <h3 className="font-black text-white text-sm uppercase tracking-[0.2em] flex items-center gap-2">
-                         <ShieldAlert size={18} className="text-slate-500" /> Audit Defense Exposure
+                  <div className="bg-[#121216] border border-white/5 rounded-2xl p-6 shadow-2xl">
+                    <div className="flex justify-between items-center mb-4">
+                       <h3 className="font-black text-white text-sm flex items-center gap-2">
+                         <div className="p-1.5 bg-amber-500/20 rounded-lg">
+                           <ShieldAlert size={14} className="text-amber-400" />
+                         </div>
+                         Audit Risk Analysis
                        </h3>
+                       <span className="text-[9px] text-slate-500">{transactions.filter(t => t.analysis).length} analyzed</span>
                     </div>
-                    <div className="grid grid-cols-3 gap-4">
-                      {[
-                        { label: 'Safe', risk: 'Green Zone', count: 14, color: 'bg-emerald-500', icon: CheckCircle2 },
-                        { label: 'Moderate', risk: 'Standard Deduction', count: 5, color: 'bg-amber-500', icon: Info },
-                        { label: 'Aggressive', risk: 'Manual Substantiation', count: 2, color: 'bg-rose-500', icon: AlertCircle },
-                      ].map((item, i) => (
-                        <div key={i} className="p-6 bg-white/[0.02] border border-white/5 rounded-3xl space-y-3 group hover:border-white/10 transition-all">
-                          <div className={`p-2 w-fit rounded-lg ${item.color}/10 ${item.color.replace('bg-', 'text-')}`}>
-                            <item.icon size={16} />
-                          </div>
-                          <div>
+                    <div className="grid grid-cols-3 gap-3">
+                      {(() => {
+                        // Calculate REAL audit risk based on analyzed transactions
+                        const analyzed = transactions.filter(t => t.analysis);
+                        const safe = analyzed.filter(t => t.analysis?.riskLevel === 'Safe' || t.analysis?.riskLevel === 'Low').length;
+                        const moderate = analyzed.filter(t => t.analysis?.riskLevel === 'Moderate').length;
+                        const aggressive = analyzed.filter(t => t.analysis?.riskLevel === 'Aggressive').length;
+                        const unanalyzed = transactions.length - analyzed.length;
+                        
+                        return [
+                          { label: 'Safe', desc: 'Well documented', count: safe, color: 'emerald', icon: CheckCircle2 },
+                          { label: 'Review', desc: 'Needs receipts', count: moderate + unanalyzed, color: 'amber', icon: Info },
+                          { label: 'High Risk', desc: 'May be flagged', count: aggressive, color: 'rose', icon: AlertCircle },
+                        ].map((item, i) => (
+                          <div 
+                            key={i} 
+                            className={`p-4 bg-white/[0.02] border border-${item.color}-500/10 rounded-xl hover:border-${item.color}-500/30 transition-all cursor-pointer`}
+                            onClick={() => setActiveTab('transactions')}
+                          >
+                            <div className={`p-1.5 w-fit rounded-lg bg-${item.color}-500/10 text-${item.color}-400 mb-2`}>
+                              <item.icon size={14} />
+                            </div>
                             <div className="text-xl font-black text-white">{item.count}</div>
-                            <div className="text-[9px] text-slate-500 font-black uppercase tracking-widest">{item.label}</div>
+                            <div className="text-[9px] text-slate-500 font-bold">{item.label}</div>
+                            <div className="text-[8px] text-slate-600 mt-0.5">{item.desc}</div>
                           </div>
-                        </div>
-                      ))}
+                        ));
+                      })()}
                     </div>
+                    {transactions.filter(t => !t.analysis).length > 0 && (
+                      <button 
+                        onClick={async () => {
+                          const unanalyzed = transactions.filter(t => !t.analysis);
+                          setIsBulkAnalyzing(true);
+                          for (const t of unanalyzed.slice(0, 10)) {
+                            try {
+                              const analysis = await analyzeTransaction(t.vendor, t.amount, t.category, t.context);
+                              if (analysis) {
+                                setTransactions(prev => {
+                                  const updated = prev.map(tx => tx.id === t.id ? { ...tx, analysis } : tx);
+                                  localStorage.setItem('mercury_transactions', JSON.stringify(updated.filter(tx => tx.bankVerified)));
+                                  return updated;
+                                });
+                              }
+                            } catch (e) { console.error(e); }
+                          }
+                          setIsBulkAnalyzing(false);
+                          setNotification({ message: 'Analysis complete!', type: 'success' });
+                        }}
+                        disabled={isBulkAnalyzing}
+                        className="w-full mt-4 py-2.5 bg-indigo-600/10 hover:bg-indigo-600/20 border border-indigo-500/20 rounded-xl text-xs font-bold text-indigo-400 flex items-center justify-center gap-2 transition-all"
+                      >
+                        {isBulkAnalyzing ? <Loader2 size={14} className="animate-spin" /> : <Brain size={14} />}
+                        Analyze {Math.min(transactions.filter(t => !t.analysis).length, 10)} Transactions
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -1436,32 +1824,41 @@ const App: React.FC = () => {
                 </div>
               </div>
 
-              {/* Month Filter */}
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                  <div className="flex items-center gap-2">
-                    <Calendar size={16} className="text-slate-500" />
-                    <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Filter by Month:</span>
+              {/* Month Filter - Modern Design */}
+              <div className="flex items-center justify-between bg-[#0c0c0e] border border-white/5 rounded-2xl p-4">
+                <div className="flex items-center gap-5">
+                  <div className="flex items-center gap-3 px-4 py-2 bg-gradient-to-r from-indigo-600/10 to-purple-600/10 border border-indigo-500/20 rounded-xl">
+                    <Calendar size={14} className="text-indigo-400" />
+                    <span className="text-[10px] font-bold text-indigo-300 uppercase tracking-wider">Time Range</span>
                   </div>
-                  <select
-                    value={currentMonth}
-                    onChange={(e) => setCurrentMonth(e.target.value)}
-                    className="bg-[#121216] border border-white/10 rounded-xl py-2 px-4 text-sm text-white focus:border-indigo-500 outline-none transition-all"
-                  >
-                    <option value="all">📊 All Time ({transactions.length} records)</option>
-                    <option value={new Date().toISOString().slice(0, 7)}>📅 This Month</option>
-                    {/* Generate last 12 months */}
-                    {Array.from({ length: 12 }, (_, i) => {
-                      const date = new Date();
-                      date.setMonth(date.getMonth() - i);
-                      const value = date.toISOString().slice(0, 7);
-                      const label = date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
-                      return <option key={value} value={value}>{label}</option>;
-                    })}
-                  </select>
+                  <div className="relative">
+                    <select
+                      value={currentMonth}
+                      onChange={(e) => setCurrentMonth(e.target.value)}
+                      className="appearance-none bg-[#18181c] hover:bg-[#1e1e24] border border-white/10 hover:border-indigo-500/30 rounded-xl py-3 pl-5 pr-12 text-sm font-semibold text-white focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 outline-none transition-all cursor-pointer shadow-lg shadow-black/20"
+                    >
+                      <option value="all">All Time • {transactions.length} records</option>
+                      <option value={new Date().toISOString().slice(0, 7)}>This Month</option>
+                      {/* Generate last 12 months */}
+                      {Array.from({ length: 12 }, (_, i) => {
+                        const date = new Date();
+                        date.setMonth(date.getMonth() - i);
+                        const value = date.toISOString().slice(0, 7);
+                        const label = date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+                        return <option key={value} value={value}>{label}</option>;
+                      })}
+                    </select>
+                    <ChevronDown size={16} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                  </div>
                 </div>
-                <div className="text-[10px] text-slate-500">
-                  Showing <span className="text-indigo-400 font-bold">{filteredTransactions.length}</span> of <span className="font-bold">{transactions.length}</span> transactions
+                <div className="flex items-center gap-3 px-4 py-2 bg-white/[0.02] border border-white/5 rounded-xl">
+                  <Activity size={14} className="text-emerald-400" />
+                  <span className="text-xs text-slate-400">
+                    <span className="text-emerald-400 font-bold">{filteredTransactions.length}</span>
+                    <span className="text-slate-600 mx-1">/</span>
+                    <span className="text-white font-medium">{transactions.length}</span>
+                    <span className="text-slate-500 ml-1.5">showing</span>
+                  </span>
                 </div>
               </div>
 
@@ -1848,15 +2245,6 @@ const App: React.FC = () => {
                 </button>
               </div>
 
-              {/* Debug: Supabase Connection Status */}
-              <div className="bg-slate-800/50 border border-slate-700 rounded-lg p-3 text-xs">
-                <span className="text-slate-400">Supabase URL: </span>
-                <span className="text-emerald-400 font-mono">{import.meta.env.VITE_SUPABASE_URL ? '✓ Configured' : '✗ NOT SET'}</span>
-                <span className="text-slate-600 mx-2">|</span>
-                <span className="text-slate-400">Key: </span>
-                <span className="text-emerald-400 font-mono">{import.meta.env.VITE_SUPABASE_ANON_KEY ? '✓ Configured' : '✗ NOT SET'}</span>
-              </div>
-
               {/* Receipts Grid - PAGINATED for performance */}
               {isLoadingReceipts ? (
                 <div className="flex items-center justify-center py-20">
@@ -2077,14 +2465,48 @@ const App: React.FC = () => {
                       <div className="p-3 bg-indigo-500/10 rounded-2xl">
                         <FileSignature size={20} className="text-indigo-400" />
                       </div>
-                      <span className={`text-[9px] font-black px-2 py-1 rounded-lg uppercase tracking-widest ${
-                        a.status === 'Active' ? 'bg-emerald-500/10 text-emerald-500' : 
-                        a.status === 'Pending' ? 'bg-amber-500/10 text-amber-500' : 
-                        'bg-slate-500/10 text-slate-500'
-                      }`}>{a.status}</span>
+                      <div className="flex items-center gap-2">
+                        {a.attachments && a.attachments.length > 0 && (
+                          <span className="text-[9px] font-bold px-2 py-1 rounded-lg bg-indigo-500/10 text-indigo-400 flex items-center gap-1">
+                            <Paperclip size={10} /> {a.attachments.length}
+                          </span>
+                        )}
+                        <span className={`text-[9px] font-black px-2 py-1 rounded-lg uppercase tracking-widest ${
+                          a.status === 'Active' ? 'bg-emerald-500/10 text-emerald-500' : 
+                          a.status === 'Pending' ? 'bg-amber-500/10 text-amber-500' : 
+                          'bg-slate-500/10 text-slate-500'
+                        }`}>{a.status}</span>
+                      </div>
                     </div>
                     <h3 className="text-lg font-bold text-white mb-1 group-hover:text-indigo-400 transition-colors">{a.clientName}</h3>
                     <p className="text-xs text-slate-500 mb-4 line-clamp-2">{a.scopeOfWork}</p>
+                    
+                    {/* View Attached Documents */}
+                    {a.attachments && a.attachments.length > 0 && (
+                      <div className="mb-4 p-3 bg-white/[0.02] border border-white/5 rounded-xl space-y-2">
+                        <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Attached Documents</span>
+                        <div className="flex flex-wrap gap-2">
+                          {a.attachments.map((att, idx) => (
+                            <button
+                              key={att.id || idx}
+                              onClick={() => {
+                                if (att.url && att.url !== '#') {
+                                  window.open(att.url, '_blank');
+                                } else {
+                                  setNotification({ message: "Document preview not available - no URL attached", type: 'error' });
+                                }
+                              }}
+                              className="flex items-center gap-2 px-3 py-2 bg-indigo-600/10 hover:bg-indigo-600/20 border border-indigo-500/20 hover:border-indigo-500/40 rounded-lg transition-all group/doc"
+                            >
+                              <FileText size={14} className="text-indigo-400" />
+                              <span className="text-[11px] font-semibold text-white truncate max-w-[120px]">{att.name}</span>
+                              <ExternalLink size={12} className="text-slate-500 group-hover/doc:text-indigo-400 transition-colors" />
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
                     <div className="flex justify-between items-center pt-4 border-t border-white/5">
                       <div>
                         <div className="text-lg font-black text-emerald-400">${a.value.toLocaleString()}</div>
@@ -2143,7 +2565,16 @@ const App: React.FC = () => {
                   <tbody className="divide-y divide-white/5">
                     {invoices.map(inv => (
                       <tr key={inv.id} className="hover:bg-white/[0.02] transition-colors">
-                        <td className="px-6 py-5 font-mono text-sm text-indigo-400">{inv.invoiceNumber}</td>
+                        <td className="px-6 py-5">
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono text-sm text-indigo-400">{inv.invoiceNumber}</span>
+                            {inv.attachments && inv.attachments.length > 0 && (
+                              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 flex items-center gap-1">
+                                <Paperclip size={9} /> {inv.attachments.length}
+                              </span>
+                            )}
+                          </div>
+                        </td>
                         <td className="px-6 py-5 font-bold text-white">{inv.clientName}</td>
                         <td className="px-6 py-5 font-mono text-emerald-400">${inv.amount.toLocaleString()}</td>
                         <td className="px-6 py-5 text-[11px] font-mono">{inv.dueDate}</td>
@@ -2155,8 +2586,41 @@ const App: React.FC = () => {
                             'bg-slate-500/10 text-slate-500'
                           }`}>{inv.status}</span>
                         </td>
-                        <td className="px-6 py-5 text-right flex justify-end gap-2">
-                          <button onClick={() => { setEditingInvoice(inv); setShowModal('invoice'); }} className="p-2 hover:text-indigo-400 transition-colors"><Edit3 size={16}/></button>
+                        <td className="px-6 py-5 text-right flex justify-end gap-1">
+                          <button 
+                            onClick={() => generateInvoicePDF(inv)} 
+                            className="p-2 hover:text-indigo-400 transition-colors" 
+                            title="Download Invoice PDF"
+                          >
+                            <Download size={16}/>
+                          </button>
+                          {inv.attachments && inv.attachments.length > 0 && (
+                            <button 
+                              onClick={() => {
+                                if (inv.attachments && inv.attachments.length === 1) {
+                                  // Single attachment - open directly
+                                  const att = inv.attachments[0];
+                                  if (att.url && att.url !== '#') {
+                                    window.open(att.url, '_blank');
+                                  } else {
+                                    setNotification({ message: "Document preview not available", type: 'error' });
+                                  }
+                                } else if (inv.attachments && inv.attachments.length > 1) {
+                                  // Multiple attachments - open all
+                                  inv.attachments.forEach(att => {
+                                    if (att.url && att.url !== '#') {
+                                      window.open(att.url, '_blank');
+                                    }
+                                  });
+                                }
+                              }} 
+                              className="p-2 hover:text-emerald-400 transition-colors" 
+                              title="View Attached Files"
+                            >
+                              <Eye size={16}/>
+                            </button>
+                          )}
+                          <button onClick={() => { setEditingInvoice(inv); setShowModal('invoice'); }} className="p-2 hover:text-indigo-400 transition-colors" title="Edit Invoice"><Edit3 size={16}/></button>
                           <button onClick={async () => { 
                               if(confirm('Delete this invoice?')) { 
                                 setInvoices(prev => {
@@ -2191,263 +2655,435 @@ const App: React.FC = () => {
                   <h2 className="text-2xl font-black text-white">Tax Center</h2>
                   <p className="text-xs text-slate-500">Schedule C (Form 1040) synthesis for {taxSummary.year}</p>
                 </div>
-                <div className="flex gap-3">
+                <div className="flex gap-2">
+                  <button 
+                    onClick={() => setActiveTab('transactions')}
+                    className="bg-white/5 hover:bg-white/10 border border-white/10 text-white px-4 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition-all"
+                  >
+                    <Receipt size={14} /> View Expenses
+                  </button>
                   <a 
                     href="https://www.irs.gov/pub/irs-pdf/f1040sc.pdf"
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="bg-white/5 hover:bg-white/10 border border-white/10 text-white px-5 py-2.5 rounded-xl text-xs font-black uppercase flex items-center gap-2 transition-all"
+                    className="bg-white/5 hover:bg-white/10 border border-white/10 text-white px-4 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition-all"
                   >
-                    <FileText size={16} /> View IRS Form
+                    <FileText size={14} /> IRS Form
                   </a>
-                  <button onClick={generateTaxPDF} className="bg-indigo-600 hover:bg-indigo-500 text-white px-5 py-2.5 rounded-xl text-xs font-black uppercase flex items-center gap-2 transition-all shadow-lg active:scale-95">
-                    <Download size={18} /> Export Report
+                  <button onClick={generateTaxPDF} className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2.5 rounded-xl text-xs font-black uppercase flex items-center gap-2 transition-all shadow-lg active:scale-95">
+                    <Download size={14} /> Export PDF
                   </button>
                 </div>
               </div>
 
-              {/* Schedule C Header Card */}
-              <div className="bg-gradient-to-r from-indigo-600/20 to-purple-600/20 border border-indigo-500/30 rounded-3xl p-6">
-                <div className="flex items-center gap-4 mb-4">
-                  <div className="p-3 bg-indigo-500/20 rounded-xl">
-                    <Calculator size={24} className="text-indigo-400" />
+              {/* Quick Stats Row */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div className="bg-[#121216] border border-emerald-500/20 rounded-2xl p-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <TrendingUp size={14} className="text-emerald-400" />
+                    <span className="text-[10px] text-slate-500 uppercase font-bold">Gross Revenue</span>
                   </div>
-                  <div>
-                    <h3 className="text-lg font-black text-white">SCHEDULE C (Form 1040)</h3>
-                    <p className="text-xs text-slate-400">Profit or Loss From Business (Sole Proprietorship)</p>
+                  <div className="text-xl font-black text-emerald-400">${taxSummary.grossIncome.toLocaleString()}</div>
+                  <p className="text-[9px] text-slate-500 mt-1">{invoices.filter(i => i.status === 'Paid').length} paid invoices</p>
+                </div>
+                <div className="bg-[#121216] border border-rose-500/20 rounded-2xl p-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <TrendingDown size={14} className="text-rose-400" />
+                    <span className="text-[10px] text-slate-500 uppercase font-bold">Total Expenses</span>
+                  </div>
+                  <div className="text-xl font-black text-rose-400">${taxSummary.totalExpenses.toLocaleString()}</div>
+                  <p className="text-[9px] text-slate-500 mt-1">{transactions.length} transactions</p>
+                </div>
+                <div className="bg-[#121216] border border-indigo-500/20 rounded-2xl p-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Activity size={14} className="text-indigo-400" />
+                    <span className="text-[10px] text-slate-500 uppercase font-bold">Net Profit</span>
+                  </div>
+                  <div className={`text-xl font-black ${taxSummary.netProfit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                    ${Math.abs(taxSummary.netProfit).toLocaleString()}
+                  </div>
+                  <p className="text-[9px] text-slate-500 mt-1">Line 31 • Schedule C</p>
+                </div>
+                <div className="bg-[#121216] border border-amber-500/20 rounded-2xl p-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Calculator size={14} className="text-amber-400" />
+                    <span className="text-[10px] text-slate-500 uppercase font-bold">Est. SE Tax</span>
+                  </div>
+                  <div className="text-xl font-black text-amber-400">${taxSummary.estimatedSelfEmploymentTax.toLocaleString(undefined, {maximumFractionDigits: 0})}</div>
+                  <p className="text-[9px] text-slate-500 mt-1">15.3% of net earnings</p>
+                </div>
+              </div>
+
+              {/* Analysis Status Bar */}
+              <div className="bg-[#0c0c0e] border border-white/5 rounded-2xl p-4 flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  <div className="flex items-center gap-2">
+                    <div className={`w-2 h-2 rounded-full ${transactions.filter(t => t.analysis).length === transactions.length && transactions.length > 0 ? 'bg-emerald-400' : 'bg-amber-400 animate-pulse'}`}></div>
+                    <span className="text-xs text-slate-400">
+                      <span className="font-bold text-white">{transactions.filter(t => t.analysis).length}</span> of <span className="font-bold">{transactions.length}</span> transactions analyzed
+                    </span>
+                  </div>
+                  <div className="h-4 w-px bg-white/10"></div>
+                  <div className="flex items-center gap-2">
+                    <Globe size={12} className={mercuryApiKey ? 'text-emerald-400' : 'text-slate-500'} />
+                    <span className="text-xs text-slate-400">Mercury {mercuryApiKey ? 'Connected' : 'Not Connected'}</span>
                   </div>
                 </div>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs">
-                  <div>
-                    <span className="text-slate-500 block mb-1">Business Name</span>
-                    <span className="text-white font-bold">{COMPANY_INFO.name}</span>
+                <div className="flex gap-2">
+                  {transactions.filter(t => !t.analysis).length > 0 && (
+                    <button 
+                      onClick={async () => {
+                        const unanalyzed = transactions.filter(t => !t.analysis);
+                        if (unanalyzed.length === 0) {
+                          setNotification({ message: 'All transactions already analyzed!', type: 'success' });
+                          return;
+                        }
+                        setIsBulkAnalyzing(true);
+                        setNotification({ message: `Analyzing ${unanalyzed.length} transactions...`, type: 'alert' });
+                        for (const t of unanalyzed) {
+                          try {
+                            const analysis = await analyzeTransaction(t.vendor, t.amount, t.category, t.context);
+                            if (analysis) {
+                              setTransactions(prev => {
+                                const updated = prev.map(tx => tx.id === t.id ? { ...tx, analysis } : tx);
+                                localStorage.setItem('mercury_transactions', JSON.stringify(updated.filter(tx => tx.bankVerified)));
+                                return updated;
+                              });
+                            }
+                          } catch (e) { console.error(e); }
+                        }
+                        setIsBulkAnalyzing(false);
+                        setNotification({ message: 'Tax analysis complete!', type: 'success' });
+                      }}
+                      disabled={isBulkAnalyzing}
+                      className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all"
+                    >
+                      {isBulkAnalyzing ? <Loader2 size={14} className="animate-spin" /> : <Brain size={14} />}
+                      Analyze All
+                    </button>
+                  )}
+                  {!mercuryApiKey && (
+                    <button 
+                      onClick={() => setShowModal('settings')}
+                      className="bg-white/5 hover:bg-white/10 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition-all"
+                    >
+                      <Settings size={14} /> Connect Bank
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Schedule C Header Card */}
+              <div className="bg-gradient-to-r from-indigo-600/10 to-purple-600/10 border border-indigo-500/20 rounded-2xl p-5">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2.5 bg-indigo-500/20 rounded-xl">
+                      <Scale size={20} className="text-indigo-400" />
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-black text-white">SCHEDULE C (Form 1040)</h3>
+                      <p className="text-[10px] text-slate-500">Profit or Loss From Business • Sole Proprietorship</p>
+                    </div>
                   </div>
-                  <div>
-                    <span className="text-slate-500 block mb-1">Tax Year</span>
-                    <span className="text-white font-bold">{taxSummary.year}</span>
-                  </div>
-                  <div>
-                    <span className="text-slate-500 block mb-1">Principal Business</span>
-                    <span className="text-white font-bold">Software Development</span>
-                  </div>
-                  <div>
-                    <span className="text-slate-500 block mb-1">Business Code</span>
-                    <span className="text-white font-bold">541511</span>
+                  <div className="flex gap-6 text-xs">
+                    <div className="text-right">
+                      <span className="text-slate-500 block">Business</span>
+                      <span className="text-white font-bold">{COMPANY_INFO.name}</span>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-slate-500 block">Tax Year</span>
+                      <span className="text-white font-bold">{taxSummary.year}</span>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-slate-500 block">NAICS Code</span>
+                      <span className="text-white font-bold">541511</span>
+                    </div>
                   </div>
                 </div>
               </div>
 
               {/* Part I: Income */}
-              <div className="bg-[#121216] border border-white/5 rounded-3xl overflow-hidden">
-                <div className="bg-emerald-500/10 border-b border-emerald-500/20 px-6 py-4">
-                  <h3 className="text-sm font-black text-emerald-400 uppercase tracking-wider">Part I — Income</h3>
+              <div className="bg-[#121216] border border-white/5 rounded-2xl overflow-hidden">
+                <div className="bg-emerald-500/10 border-b border-emerald-500/20 px-5 py-3 flex items-center justify-between">
+                  <h3 className="text-xs font-black text-emerald-400 uppercase tracking-wider">Part I — Income</h3>
+                  <button 
+                    onClick={() => setActiveTab('invoices')}
+                    className="text-[10px] text-emerald-400 hover:text-emerald-300 font-bold flex items-center gap-1"
+                  >
+                    View Invoices <ChevronRight size={12} />
+                  </button>
                 </div>
-                <div className="p-6 space-y-4">
-                  <div className="flex items-center justify-between p-4 bg-white/[0.02] rounded-xl border border-white/5">
+                <div className="p-4 space-y-2">
+                  <div className="flex items-center justify-between p-3 bg-white/[0.02] rounded-xl border border-white/5">
                     <div className="flex items-center gap-3">
-                      <span className="text-[10px] font-mono text-slate-500 w-8">1</span>
-                      <span className="text-sm text-slate-300">Gross receipts or sales</span>
+                      <span className="text-[9px] font-mono text-slate-500 w-6">1</span>
+                      <span className="text-xs text-slate-300">Gross receipts or sales</span>
                     </div>
-                    <span className="font-mono text-lg font-bold text-emerald-400">${taxSummary.grossIncome.toLocaleString()}</span>
+                    <span className="font-mono text-sm font-bold text-emerald-400">${taxSummary.grossIncome.toLocaleString()}</span>
                   </div>
-                  <div className="flex items-center justify-between p-4 bg-white/[0.02] rounded-xl border border-white/5">
+                  <div className="flex items-center justify-between p-3 bg-white/[0.02] rounded-xl border border-white/5">
                     <div className="flex items-center gap-3">
-                      <span className="text-[10px] font-mono text-slate-500 w-8">2</span>
-                      <span className="text-sm text-slate-300">Returns and allowances</span>
+                      <span className="text-[9px] font-mono text-slate-500 w-6">2</span>
+                      <span className="text-xs text-slate-300">Returns and allowances</span>
                     </div>
-                    <span className="font-mono text-lg font-bold text-slate-500">$0</span>
+                    <span className="font-mono text-sm font-bold text-slate-500">$0</span>
                   </div>
-                  <div className="flex items-center justify-between p-4 bg-emerald-500/10 rounded-xl border border-emerald-500/20">
+                  <div className="flex items-center justify-between p-3 bg-emerald-500/10 rounded-xl border border-emerald-500/20">
                     <div className="flex items-center gap-3">
-                      <span className="text-[10px] font-mono text-emerald-400 w-8">7</span>
-                      <span className="text-sm font-bold text-white">Gross income</span>
+                      <span className="text-[9px] font-mono text-emerald-400 w-6">7</span>
+                      <span className="text-xs font-bold text-white">Gross income</span>
                     </div>
-                    <span className="font-mono text-xl font-black text-emerald-400">${taxSummary.grossIncome.toLocaleString()}</span>
+                    <span className="font-mono text-base font-black text-emerald-400">${taxSummary.grossIncome.toLocaleString()}</span>
                   </div>
                 </div>
               </div>
 
               {/* Part II: Expenses */}
-              <div className="bg-[#121216] border border-white/5 rounded-3xl overflow-hidden">
-                <div className="bg-rose-500/10 border-b border-rose-500/20 px-6 py-4">
-                  <h3 className="text-sm font-black text-rose-400 uppercase tracking-wider">Part II — Expenses</h3>
+              <div className="bg-[#121216] border border-white/5 rounded-2xl overflow-hidden">
+                <div className="bg-rose-500/10 border-b border-rose-500/20 px-5 py-3 flex items-center justify-between">
+                  <h3 className="text-xs font-black text-rose-400 uppercase tracking-wider">Part II — Expenses</h3>
+                  <button 
+                    onClick={() => setActiveTab('transactions')}
+                    className="text-[10px] text-rose-400 hover:text-rose-300 font-bold flex items-center gap-1"
+                  >
+                    View All Expenses <ChevronRight size={12} />
+                  </button>
                 </div>
-                <div className="p-6">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {Object.entries(SCHEDULE_C_LINES).map(([key, info]) => {
-                      const amount = taxSummary.scheduleC[key] || 0;
-                      if (amount === 0) return null;
-                      return (
-                        <div key={key} className="flex items-center justify-between p-4 bg-white/[0.02] rounded-xl border border-white/5 hover:border-indigo-500/30 transition-colors">
-                          <div className="flex items-center gap-3">
-                            <span className="text-[10px] font-mono text-slate-500 w-8">{info.line}</span>
-                            <span className="text-sm text-slate-300">{info.label}</span>
+                <div className="p-4">
+                  {Object.entries(SCHEDULE_C_LINES).filter(([key]) => (taxSummary.scheduleC[key] || 0) > 0).length > 0 ? (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                      {Object.entries(SCHEDULE_C_LINES).map(([key, info]) => {
+                        const amount = taxSummary.scheduleC[key] || 0;
+                        if (amount === 0) return null;
+                        return (
+                          <div key={key} className="flex items-center justify-between p-3 bg-white/[0.02] rounded-xl border border-white/5 hover:border-rose-500/30 transition-colors cursor-pointer"
+                            onClick={() => setActiveTab('transactions')}
+                          >
+                            <div className="flex items-center gap-2">
+                              <span className="text-[9px] font-mono text-slate-500 w-6">{info.line}</span>
+                              <span className="text-xs text-slate-300">{info.label}</span>
+                            </div>
+                            <span className="font-mono text-xs font-bold text-rose-400">${amount.toLocaleString()}</span>
                           </div>
-                          <span className="font-mono text-sm font-bold text-rose-400">${amount.toLocaleString()}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="text-center py-8">
+                      <Receipt size={32} className="mx-auto mb-3 text-slate-600" />
+                      <p className="text-xs text-slate-500 mb-3">No expenses recorded yet</p>
+                      <button 
+                        onClick={() => mercuryApiKey ? handleMercurySync() : setShowModal('settings')}
+                        className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-xl text-xs font-bold"
+                      >
+                        {mercuryApiKey ? 'Sync from Mercury' : 'Connect Mercury Bank'}
+                      </button>
+                    </div>
+                  )}
                   
                   {/* Totals */}
-                  <div className="mt-6 pt-6 border-t border-white/10 space-y-4">
-                    <div className="flex items-center justify-between p-4 bg-rose-500/10 rounded-xl border border-rose-500/20">
-                      <div className="flex items-center gap-3">
-                        <span className="text-[10px] font-mono text-rose-400 w-8">28</span>
-                        <span className="text-sm font-bold text-white">Total expenses</span>
+                  {taxSummary.totalExpenses > 0 && (
+                    <div className="mt-4 pt-4 border-t border-white/10">
+                      <div className="flex items-center justify-between p-3 bg-rose-500/10 rounded-xl border border-rose-500/20">
+                        <div className="flex items-center gap-2">
+                          <span className="text-[9px] font-mono text-rose-400 w-6">28</span>
+                          <span className="text-xs font-bold text-white">Total expenses</span>
+                        </div>
+                        <span className="font-mono text-base font-black text-rose-400">${taxSummary.totalExpenses.toLocaleString()}</span>
                       </div>
-                      <span className="font-mono text-xl font-black text-rose-400">${taxSummary.totalExpenses.toLocaleString()}</span>
                     </div>
-                  </div>
+                  )}
                 </div>
               </div>
 
-              {/* Net Profit/Loss */}
-              <div className="bg-gradient-to-r from-emerald-600/20 to-cyan-600/20 border border-emerald-500/30 rounded-3xl p-6">
+              {/* Net Profit/Loss Card */}
+              <div className={`bg-gradient-to-r ${taxSummary.netProfit >= 0 ? 'from-emerald-600/10 to-cyan-600/10 border-emerald-500/20' : 'from-rose-600/10 to-orange-600/10 border-rose-500/20'} border rounded-2xl p-5`}>
                 <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-4">
-                    <div className="p-3 bg-emerald-500/20 rounded-xl">
-                      <TrendingUp size={24} className="text-emerald-400" />
+                  <div className="flex items-center gap-3">
+                    <div className={`p-2.5 ${taxSummary.netProfit >= 0 ? 'bg-emerald-500/20' : 'bg-rose-500/20'} rounded-xl`}>
+                      {taxSummary.netProfit >= 0 ? <TrendingUp size={20} className="text-emerald-400" /> : <TrendingDown size={20} className="text-rose-400" />}
                     </div>
                     <div>
-                      <span className="text-[10px] font-mono text-emerald-400 block">Line 31</span>
-                      <span className="text-lg font-black text-white">Net Profit (or Loss)</span>
+                      <span className="text-[9px] font-mono text-slate-400 block">Line 31 • Schedule C</span>
+                      <span className="text-sm font-black text-white">Net {taxSummary.netProfit >= 0 ? 'Profit' : 'Loss'}</span>
                     </div>
                   </div>
                   <div className="text-right">
-                    <span className={`font-mono text-4xl font-black ${taxSummary.netProfit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                      ${Math.abs(taxSummary.netProfit).toLocaleString()}
+                    <span className={`font-mono text-3xl font-black ${taxSummary.netProfit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                      {taxSummary.netProfit < 0 && '('}${Math.abs(taxSummary.netProfit).toLocaleString()}{taxSummary.netProfit < 0 && ')'}
                     </span>
-                    {taxSummary.netProfit < 0 && <span className="text-rose-400 text-xs block mt-1">(Loss)</span>}
+                    <p className="text-[9px] text-slate-500 mt-1">Gross Income − Total Expenses</p>
                   </div>
                 </div>
               </div>
 
-              {/* Tax Estimates */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div className="bg-[#121216] border border-white/5 rounded-3xl p-6">
-                  <div className="flex items-center gap-2 mb-3">
-                    <Percent size={16} className="text-amber-400" />
-                    <span className="text-[10px] text-slate-500 uppercase font-bold">Self-Employment Tax</span>
+              {/* Tax Estimates Row */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="bg-[#121216] border border-amber-500/20 rounded-2xl p-4 hover:border-amber-500/40 transition-colors">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <Percent size={14} className="text-amber-400" />
+                      <span className="text-[10px] text-slate-500 uppercase font-bold">Self-Employment Tax</span>
+                    </div>
+                    <a href="https://www.irs.gov/businesses/small-businesses-self-employed/self-employment-tax-social-security-and-medicare-taxes" target="_blank" rel="noopener" className="text-amber-400 hover:text-amber-300">
+                      <Info size={12} />
+                    </a>
                   </div>
-                  <div className="text-2xl font-black text-amber-400">${taxSummary.estimatedSelfEmploymentTax.toLocaleString(undefined, {maximumFractionDigits: 0})}</div>
-                  <p className="text-[10px] text-slate-500 mt-2">15.3% of 92.35% of net profit</p>
+                  <div className="text-xl font-black text-amber-400">${taxSummary.estimatedSelfEmploymentTax.toLocaleString(undefined, {maximumFractionDigits: 0})}</div>
+                  <p className="text-[9px] text-slate-500 mt-1">Social Security (12.4%) + Medicare (2.9%)</p>
                 </div>
-                <div className="bg-[#121216] border border-white/5 rounded-3xl p-6">
-                  <div className="flex items-center gap-2 mb-3">
-                    <ShieldCheck size={16} className="text-cyan-400" />
-                    <span className="text-[10px] text-slate-500 uppercase font-bold">QBI Deduction</span>
+                <div className="bg-[#121216] border border-cyan-500/20 rounded-2xl p-4 hover:border-cyan-500/40 transition-colors">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <ShieldCheck size={14} className="text-cyan-400" />
+                      <span className="text-[10px] text-slate-500 uppercase font-bold">QBI Deduction (§199A)</span>
+                    </div>
+                    <a href="https://www.irs.gov/newsroom/qualified-business-income-deduction" target="_blank" rel="noopener" className="text-cyan-400 hover:text-cyan-300">
+                      <Info size={12} />
+                    </a>
                   </div>
-                  <div className="text-2xl font-black text-cyan-400">${taxSummary.estimatedQBI.toLocaleString(undefined, {maximumFractionDigits: 0})}</div>
-                  <p className="text-[10px] text-slate-500 mt-2">20% of qualified business income</p>
+                  <div className="text-xl font-black text-cyan-400">${taxSummary.estimatedQBI.toLocaleString(undefined, {maximumFractionDigits: 0})}</div>
+                  <p className="text-[9px] text-slate-500 mt-1">20% deduction on qualified income</p>
                 </div>
-                <div className="bg-[#121216] border border-white/5 rounded-3xl p-6">
-                  <div className="flex items-center gap-2 mb-3">
-                    <DollarSign size={16} className="text-emerald-400" />
-                    <span className="text-[10px] text-slate-500 uppercase font-bold">Potential Credits</span>
+                <div className="bg-[#121216] border border-emerald-500/20 rounded-2xl p-4 hover:border-emerald-500/40 transition-colors">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <DollarSign size={14} className="text-emerald-400" />
+                      <span className="text-[10px] text-slate-500 uppercase font-bold">Estimated Savings</span>
+                    </div>
+                    <CheckCircle2 size={12} className="text-emerald-400" />
                   </div>
-                  <div className="text-2xl font-black text-emerald-400">${taxSummary.potentialCredits.toLocaleString(undefined, {maximumFractionDigits: 0})}</div>
-                  <p className="text-[10px] text-slate-500 mt-2">Based on analyzed deductions</p>
-                </div>
-              </div>
-
-              {/* Schedule C Reference */}
-              <div className="bg-[#121216] border border-white/5 rounded-3xl overflow-hidden">
-                <div className="bg-indigo-500/10 border-b border-indigo-500/20 px-6 py-4 flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <BookOpen size={18} className="text-indigo-400" />
-                    <h3 className="text-sm font-black text-indigo-400 uppercase tracking-wider">Schedule C Reference Guide</h3>
-                  </div>
-                  <a 
-                    href="https://www.irs.gov/forms-pubs/about-schedule-c-form-1040"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-xs text-indigo-400 hover:text-indigo-300 flex items-center gap-1"
-                  >
-                    IRS Instructions <ExternalLink size={12} />
-                  </a>
-                </div>
-                <div className="p-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  <div className="p-4 bg-white/[0.02] rounded-xl border border-white/5">
-                    <h4 className="text-xs font-bold text-white mb-2 flex items-center gap-2">
-                      <span className="p-1 bg-emerald-500/20 rounded text-emerald-400 text-[10px]">Part I</span>
-                      Income
-                    </h4>
-                    <p className="text-[10px] text-slate-500">Lines 1-7: Report gross receipts, returns, cost of goods sold, and calculate gross income.</p>
-                  </div>
-                  <div className="p-4 bg-white/[0.02] rounded-xl border border-white/5">
-                    <h4 className="text-xs font-bold text-white mb-2 flex items-center gap-2">
-                      <span className="p-1 bg-rose-500/20 rounded text-rose-400 text-[10px]">Part II</span>
-                      Expenses
-                    </h4>
-                    <p className="text-[10px] text-slate-500">Lines 8-27: Deductible business expenses including advertising, car, supplies, and more.</p>
-                  </div>
-                  <div className="p-4 bg-white/[0.02] rounded-xl border border-white/5">
-                    <h4 className="text-xs font-bold text-white mb-2 flex items-center gap-2">
-                      <span className="p-1 bg-amber-500/20 rounded text-amber-400 text-[10px]">Part III</span>
-                      Cost of Goods Sold
-                    </h4>
-                    <p className="text-[10px] text-slate-500">Lines 33-42: For businesses with inventory (typically not applicable for services).</p>
-                  </div>
-                  <div className="p-4 bg-white/[0.02] rounded-xl border border-white/5">
-                    <h4 className="text-xs font-bold text-white mb-2 flex items-center gap-2">
-                      <span className="p-1 bg-cyan-500/20 rounded text-cyan-400 text-[10px]">Part IV</span>
-                      Vehicle Info
-                    </h4>
-                    <p className="text-[10px] text-slate-500">Lines 43-47: Required if claiming car/truck expenses without Form 4562.</p>
-                  </div>
-                  <div className="p-4 bg-white/[0.02] rounded-xl border border-white/5">
-                    <h4 className="text-xs font-bold text-white mb-2 flex items-center gap-2">
-                      <span className="p-1 bg-purple-500/20 rounded text-purple-400 text-[10px]">Part V</span>
-                      Other Expenses
-                    </h4>
-                    <p className="text-[10px] text-slate-500">Line 48: Additional expenses not covered in Lines 8-27.</p>
-                  </div>
-                  <div className="p-4 bg-white/[0.02] rounded-xl border border-white/5">
-                    <h4 className="text-xs font-bold text-white mb-2 flex items-center gap-2">
-                      <span className="p-1 bg-indigo-500/20 rounded text-indigo-400 text-[10px]">§179</span>
-                      Depreciation
-                    </h4>
-                    <p className="text-[10px] text-slate-500">Section 179 allows immediate deduction of equipment purchases up to $1,160,000 (2024).</p>
-                  </div>
+                  <div className="text-xl font-black text-emerald-400">${(taxSummary.estimatedQBI + taxSummary.potentialCredits).toLocaleString(undefined, {maximumFractionDigits: 0})}</div>
+                  <p className="text-[9px] text-slate-500 mt-1">QBI + analyzed deductions benefit</p>
                 </div>
               </div>
 
-              {/* Expenses by Category (Original) */}
-              <div className="bg-[#121216] border border-white/5 rounded-3xl p-8">
-                <h3 className="text-lg font-black text-white mb-6 flex items-center gap-3">
-                  <FolderOpen size={20} className="text-indigo-400" />
-                  Expenses by Business Category
-                </h3>
-                <div className="space-y-3">
-                  {Object.entries(taxSummary.expensesByCategory).length > 0 ? (
-                    Object.entries(taxSummary.expensesByCategory)
-                      .sort(([, a], [, b]) => (b as number) - (a as number))
-                      .map(([cat, val]) => {
-                        const amount = val as number;
-                        const percentage = (amount / taxSummary.totalExpenses) * 100;
-                        return (
-                          <div key={cat} className="group">
-                            <div className="flex items-center justify-between p-4 bg-white/[0.02] rounded-xl border border-white/5 hover:border-indigo-500/30 transition-colors">
-                              <div className="flex items-center gap-3">
-                                <div className="w-2 h-2 rounded-full bg-indigo-500"></div>
-                                <span className="text-sm font-bold text-white">{cat}</span>
-                                <span className="text-[10px] text-slate-500">({percentage.toFixed(1)}%)</span>
+              {/* Two Column Layout: Categories + Quick Links */}
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                {/* Expenses by Category */}
+                <div className="lg:col-span-2 bg-[#121216] border border-white/5 rounded-2xl p-5">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-sm font-black text-white flex items-center gap-2">
+                      <FolderOpen size={16} className="text-indigo-400" />
+                      Expense Breakdown
+                    </h3>
+                    <span className="text-[10px] text-slate-500">{Object.entries(taxSummary.expensesByCategory).length} categories</span>
+                  </div>
+                  <div className="space-y-2 max-h-[300px] overflow-y-auto custom-scrollbar pr-2">
+                    {Object.entries(taxSummary.expensesByCategory).length > 0 ? (
+                      Object.entries(taxSummary.expensesByCategory)
+                        .sort(([, a], [, b]) => (b as number) - (a as number))
+                        .map(([cat, val]) => {
+                          const amount = val as number;
+                          const percentage = taxSummary.totalExpenses > 0 ? (amount / taxSummary.totalExpenses) * 100 : 0;
+                          return (
+                            <div key={cat} className="group cursor-pointer" onClick={() => setActiveTab('transactions')}>
+                              <div className="flex items-center justify-between p-3 bg-white/[0.02] rounded-xl border border-white/5 hover:border-indigo-500/30 transition-colors">
+                                <div className="flex items-center gap-2">
+                                  <div className="w-1.5 h-1.5 rounded-full bg-indigo-500"></div>
+                                  <span className="text-xs font-bold text-white">{cat}</span>
+                                  <span className="text-[9px] text-slate-500">({percentage.toFixed(1)}%)</span>
+                                </div>
+                                <span className="font-mono text-xs text-indigo-400 font-bold">${amount.toLocaleString()}</span>
                               </div>
-                              <span className="font-mono text-indigo-400 font-bold">${amount.toLocaleString()}</span>
+                              <div className="mt-1 h-0.5 bg-white/5 rounded-full overflow-hidden">
+                                <div 
+                                  className="h-full bg-gradient-to-r from-indigo-500 to-purple-500 transition-all duration-500"
+                                  style={{ width: `${percentage}%` }}
+                                ></div>
+                              </div>
                             </div>
-                            <div className="mt-1 h-1 bg-white/5 rounded-full overflow-hidden">
-                              <div 
-                                className="h-full bg-gradient-to-r from-indigo-500 to-purple-500 transition-all duration-500"
-                                style={{ width: `${percentage}%` }}
-                              ></div>
-                            </div>
-                          </div>
-                        );
-                      })
-                  ) : (
-                    <p className="text-slate-500 text-sm text-center py-8">No expenses recorded yet. Sync with Mercury to import transactions.</p>
-                  )}
+                          );
+                        })
+                    ) : (
+                      <div className="text-center py-8">
+                        <FolderOpen size={28} className="mx-auto mb-2 text-slate-600" />
+                        <p className="text-xs text-slate-500">No expenses yet</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Quick Links & Resources */}
+                <div className="bg-[#121216] border border-white/5 rounded-2xl p-5">
+                  <h3 className="text-sm font-black text-white mb-4 flex items-center gap-2">
+                    <BookOpen size={16} className="text-indigo-400" />
+                    IRS Resources
+                  </h3>
+                  <div className="space-y-2">
+                    <a 
+                      href="https://www.irs.gov/pub/irs-pdf/f1040sc.pdf"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center justify-between p-3 bg-white/[0.02] rounded-xl border border-white/5 hover:border-indigo-500/30 transition-colors group"
+                    >
+                      <div className="flex items-center gap-2">
+                        <FileText size={14} className="text-rose-400" />
+                        <span className="text-xs text-slate-300">Schedule C Form</span>
+                      </div>
+                      <ExternalLink size={12} className="text-slate-500 group-hover:text-indigo-400" />
+                    </a>
+                    <a 
+                      href="https://www.irs.gov/forms-pubs/about-schedule-c-form-1040"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center justify-between p-3 bg-white/[0.02] rounded-xl border border-white/5 hover:border-indigo-500/30 transition-colors group"
+                    >
+                      <div className="flex items-center gap-2">
+                        <BookOpen size={14} className="text-amber-400" />
+                        <span className="text-xs text-slate-300">Instructions</span>
+                      </div>
+                      <ExternalLink size={12} className="text-slate-500 group-hover:text-indigo-400" />
+                    </a>
+                    <a 
+                      href="https://www.irs.gov/businesses/small-businesses-self-employed/self-employed-individuals-tax-center"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center justify-between p-3 bg-white/[0.02] rounded-xl border border-white/5 hover:border-indigo-500/30 transition-colors group"
+                    >
+                      <div className="flex items-center gap-2">
+                        <Gavel size={14} className="text-cyan-400" />
+                        <span className="text-xs text-slate-300">SE Tax Center</span>
+                      </div>
+                      <ExternalLink size={12} className="text-slate-500 group-hover:text-indigo-400" />
+                    </a>
+                    <a 
+                      href="https://www.irs.gov/newsroom/qualified-business-income-deduction"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center justify-between p-3 bg-white/[0.02] rounded-xl border border-white/5 hover:border-indigo-500/30 transition-colors group"
+                    >
+                      <div className="flex items-center gap-2">
+                        <ShieldCheck size={14} className="text-emerald-400" />
+                        <span className="text-xs text-slate-300">QBI Deduction (§199A)</span>
+                      </div>
+                      <ExternalLink size={12} className="text-slate-500 group-hover:text-indigo-400" />
+                    </a>
+                  </div>
+
+                  {/* Quick Actions */}
+                  <div className="mt-4 pt-4 border-t border-white/5 space-y-2">
+                    <button 
+                      onClick={() => setActiveTab('chat')}
+                      className="w-full flex items-center justify-between p-3 bg-indigo-600/10 hover:bg-indigo-600/20 rounded-xl border border-indigo-500/20 transition-colors"
+                    >
+                      <div className="flex items-center gap-2">
+                        <Brain size={14} className="text-indigo-400" />
+                        <span className="text-xs font-bold text-white">Ask AI Strategist</span>
+                      </div>
+                      <ChevronRight size={14} className="text-indigo-400" />
+                    </button>
+                    <button 
+                      onClick={generateTaxPDF}
+                      className="w-full flex items-center justify-between p-3 bg-white/[0.02] hover:bg-white/[0.04] rounded-xl border border-white/5 transition-colors"
+                    >
+                      <div className="flex items-center gap-2">
+                        <Download size={14} className="text-slate-400" />
+                        <span className="text-xs text-slate-300">Download Tax Report</span>
+                      </div>
+                      <ChevronRight size={14} className="text-slate-500" />
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -2636,19 +3272,13 @@ const App: React.FC = () => {
                 <div className="flex items-center gap-2">
                   <Brain size={16} className="text-purple-400" />
                   <span className="text-sm font-bold text-white">Gemini AI API Key</span>
-                  {geminiApiKey && <span className="text-[9px] px-2 py-0.5 bg-emerald-500/20 text-emerald-400 rounded-full font-bold">CONFIGURED</span>}
+                  {localStorage.getItem('gemini_api_key') && <span className="text-[9px] px-2 py-0.5 bg-emerald-500/20 text-emerald-400 rounded-full font-bold">CONFIGURED</span>}
                 </div>
                 <p className="text-[11px] text-slate-500">Powers AI analysis, strategic summaries, and chat. Get a free key from <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener" className="text-indigo-400 hover:underline">Google AI Studio</a>.</p>
                 <input 
                   type="password"
                   value={geminiApiKey}
-                  onChange={(e) => {
-                    const key = e.target.value;
-                    setGeminiApiKey(key);
-                    localStorage.setItem('gemini_api_key', key);
-                    // Reset the AI client so it uses the new key
-                    import('./services/geminiService').then(m => m.resetGeminiClient());
-                  }}
+                  onChange={(e) => setGeminiApiKey(e.target.value)}
                   placeholder="AIza..."
                   className="w-full bg-[#09090A] border border-white/10 rounded-xl py-3 px-4 text-sm text-white focus:border-purple-500 outline-none"
                 />
@@ -2659,21 +3289,35 @@ const App: React.FC = () => {
                 <div className="flex items-center gap-2">
                   <LinkIcon size={16} className="text-indigo-400" />
                   <span className="text-sm font-bold text-white">Mercury API Key</span>
-                  {mercuryApiKey && <span className="text-[9px] px-2 py-0.5 bg-emerald-500/20 text-emerald-400 rounded-full font-bold">CONFIGURED</span>}
+                  {localStorage.getItem('mercury_key') && <span className="text-[9px] px-2 py-0.5 bg-emerald-500/20 text-emerald-400 rounded-full font-bold">CONFIGURED</span>}
                 </div>
                 <p className="text-[11px] text-slate-500">Syncs your bank transactions from Mercury. Get your API key from Mercury Dashboard → Settings → API.</p>
                 <input 
                   type="password"
                   value={mercuryApiKey}
-                  onChange={(e) => {
-                    const key = e.target.value;
-                    setMercuryApiKey(key);
-                    localStorage.setItem('mercury_key', key);
-                  }}
+                  onChange={(e) => setMercuryApiKey(e.target.value)}
                   placeholder="secret-token:..."
                   className="w-full bg-[#09090A] border border-white/10 rounded-xl py-3 px-4 text-sm text-white focus:border-indigo-500 outline-none"
                 />
               </div>
+
+              {/* Save Button */}
+              <button
+                onClick={() => {
+                  // Save Gemini key
+                  localStorage.setItem('gemini_api_key', geminiApiKey);
+                  import('./services/geminiService').then(m => m.resetGeminiClient());
+                  // Save Mercury key
+                  localStorage.setItem('mercury_key', mercuryApiKey);
+                  // Show success feedback
+                  setShowModal(null);
+                  // Optional: could add a toast notification here
+                }}
+                className="w-full bg-indigo-600 hover:bg-indigo-500 text-white py-4 px-6 rounded-2xl text-sm font-black uppercase tracking-wider shadow-lg shadow-indigo-600/20 transition-all active:scale-[0.98] flex items-center justify-center gap-2"
+              >
+                <Check size={18} />
+                Save API Keys
+              </button>
 
               {/* Security Note */}
               <div className="flex items-center gap-3 p-4 bg-emerald-500/5 border border-emerald-500/10 rounded-2xl">
@@ -2901,7 +3545,7 @@ const App: React.FC = () => {
 
               {/* PDF Upload */}
               <div className="space-y-3">
-                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Agreement Document (PDF)</label>
+                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Agreement Documents</label>
                 <div 
                   className="border-2 border-dashed border-white/10 rounded-2xl p-8 text-center hover:border-indigo-500/50 transition-all cursor-pointer group"
                   onClick={() => fileInputRef.current?.click()}
@@ -2910,27 +3554,35 @@ const App: React.FC = () => {
                     ref={fileInputRef}
                     type="file" 
                     accept=".pdf,.doc,.docx"
+                    multiple
                     className="hidden"
                     onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      if (file) {
-                        const newAttachment: Attachment = {
-                          id: `att_${Date.now()}`,
+                      const files = e.target.files;
+                      if (files && files.length > 0) {
+                        const newAttachments: Attachment[] = Array.from(files).map((file, idx) => ({
+                          id: `att_${Date.now()}_${idx}`,
                           name: file.name,
                           type: file.type,
                           url: URL.createObjectURL(file),
                           dateAdded: new Date().toISOString().split('T')[0]
-                        };
-                        setTempAttachments(prev => [...prev, newAttachment]);
-                        setNotification({ message: `File "${file.name}" attached`, type: 'success' });
+                        }));
+                        setTempAttachments(prev => [...prev, ...newAttachments]);
+                        setNotification({ 
+                          message: files.length === 1 
+                            ? `File "${files[0].name}" attached` 
+                            : `${files.length} files attached`, 
+                          type: 'success' 
+                        });
                       }
+                      // Reset input so same file(s) can be selected again
+                      e.target.value = '';
                     }}
                   />
                   <div className="p-4 bg-indigo-500/10 rounded-2xl inline-block mb-4 group-hover:bg-indigo-500/20 transition-all">
                     <UploadCloud size={32} className="text-indigo-400" />
                   </div>
-                  <p className="text-sm text-slate-400 mb-1">Click to upload agreement PDF</p>
-                  <p className="text-[10px] text-slate-600">Supports PDF, DOC, DOCX files</p>
+                  <p className="text-sm text-slate-400 mb-1">Click to upload documents</p>
+                  <p className="text-[10px] text-slate-600">Supports PDF, DOC, DOCX • Select multiple files</p>
                 </div>
 
                 {/* Attached Files */}
@@ -3145,9 +3797,9 @@ const App: React.FC = () => {
       {/* Invoice Modal */}
       {showModal === 'invoice' && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => { setShowModal(null); setEditingInvoice(null); }} />
+          <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => { setShowModal(null); setEditingInvoice(null); setTempInvoiceAttachments([]); }} />
           <div className="bg-[#121216] border border-white/10 w-full max-w-xl rounded-3xl p-8 relative z-10 shadow-2xl max-h-[90vh] overflow-y-auto custom-scrollbar">
-            <button onClick={() => { setShowModal(null); setEditingInvoice(null); }} className="absolute top-6 right-6 text-slate-500 hover:text-white transition-colors"><X size={20} /></button>
+            <button onClick={() => { setShowModal(null); setEditingInvoice(null); setTempInvoiceAttachments([]); }} className="absolute top-6 right-6 text-slate-500 hover:text-white transition-colors"><X size={20} /></button>
             
             <div className="flex items-center gap-4 mb-8">
               <div className="p-4 bg-emerald-600 rounded-2xl text-white">
@@ -3170,7 +3822,8 @@ const App: React.FC = () => {
                 dueDate: fd.get('dueDate') as string,
                 amount: parseFloat(fd.get('amount') as string) || 0,
                 description: fd.get('description') as string,
-                status: fd.get('status') as 'Paid' | 'Sent' | 'Draft' | 'Overdue'
+                status: fd.get('status') as 'Paid' | 'Sent' | 'Draft' | 'Overdue',
+                attachments: tempInvoiceAttachments.length > 0 ? tempInvoiceAttachments : (editingInvoice?.attachments || [])
               };
               
               // Update local state first
@@ -3198,6 +3851,7 @@ const App: React.FC = () => {
               setNotification({ message: editingInvoice ? 'Invoice updated!' : 'Invoice created!', type: 'success' });
               setShowModal(null);
               setEditingInvoice(null);
+              setTempInvoiceAttachments([]);
             }} className="space-y-6">
               
               <div className="grid grid-cols-2 gap-4">
@@ -3285,14 +3939,97 @@ const App: React.FC = () => {
                 </div>
               </div>
 
+              {/* Invoice Document Upload */}
+              <div className="space-y-3">
+                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Invoice Document</label>
+                <div 
+                  className="border-2 border-dashed border-white/10 rounded-2xl p-6 text-center hover:border-emerald-500/50 transition-all cursor-pointer group"
+                  onClick={() => invoiceFileInputRef.current?.click()}
+                >
+                  <input 
+                    ref={invoiceFileInputRef}
+                    type="file" 
+                    accept=".pdf,.doc,.docx,.png,.jpg,.jpeg"
+                    multiple
+                    className="hidden"
+                    onChange={(e) => {
+                      const files = e.target.files;
+                      if (files && files.length > 0) {
+                        const newAttachments: Attachment[] = Array.from(files).map((file, idx) => ({
+                          id: `inv_att_${Date.now()}_${idx}`,
+                          name: file.name,
+                          type: file.type,
+                          url: URL.createObjectURL(file),
+                          dateAdded: new Date().toISOString().split('T')[0]
+                        }));
+                        setTempInvoiceAttachments(prev => [...prev, ...newAttachments]);
+                        setNotification({ 
+                          message: files.length === 1 
+                            ? `File "${files[0].name}" attached` 
+                            : `${files.length} files attached`, 
+                          type: 'success' 
+                        });
+                      }
+                      e.target.value = '';
+                    }}
+                  />
+                  <div className="p-3 bg-emerald-500/10 rounded-xl inline-block mb-3 group-hover:bg-emerald-500/20 transition-all">
+                    <UploadCloud size={24} className="text-emerald-400" />
+                  </div>
+                  <p className="text-sm text-slate-400 mb-1">Click to upload invoice PDF</p>
+                  <p className="text-[10px] text-slate-600">PDF, DOC, or Image • Select multiple files</p>
+                </div>
+
+                {/* Attached Files */}
+                {(tempInvoiceAttachments.length > 0 || (editingInvoice?.attachments && editingInvoice.attachments.length > 0)) && (
+                  <div className="space-y-2 mt-4">
+                    <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Attached Documents</span>
+                    <div className="space-y-2">
+                      {[...tempInvoiceAttachments, ...(editingInvoice?.attachments || [])].map((att, idx) => (
+                        <div key={att.id || idx} className="flex items-center justify-between p-3 bg-white/[0.02] rounded-xl border border-white/5">
+                          <div className="flex items-center gap-3">
+                            <div className="p-2 bg-emerald-500/10 rounded-lg">
+                              <FileText size={16} className="text-emerald-400" />
+                            </div>
+                            <div>
+                              <p className="text-xs font-bold text-white truncate max-w-[200px]">{att.name}</p>
+                              <p className="text-[9px] text-slate-500">Added: {att.dateAdded}</p>
+                            </div>
+                          </div>
+                          <button 
+                            type="button"
+                            onClick={() => {
+                              setTempInvoiceAttachments(prev => prev.filter(a => a.id !== att.id));
+                            }}
+                            className="p-2 text-slate-500 hover:text-rose-400 transition-colors"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
               <div className="flex gap-3 pt-4">
                 <button 
                   type="button" 
-                  onClick={() => { setShowModal(null); setEditingInvoice(null); }}
-                  className="flex-1 py-4 bg-white/5 hover:bg-white/10 text-slate-400 font-bold uppercase tracking-widest rounded-xl transition-all"
+                  onClick={() => { setShowModal(null); setEditingInvoice(null); setTempInvoiceAttachments([]); }}
+                  className="py-4 px-6 bg-white/5 hover:bg-white/10 text-slate-400 font-bold uppercase tracking-widest rounded-xl transition-all"
                 >
                   Cancel
                 </button>
+                {editingInvoice && (
+                  <button 
+                    type="button"
+                    onClick={() => generateInvoicePDF(editingInvoice)}
+                    className="py-4 px-6 bg-indigo-600 hover:bg-indigo-500 text-white font-bold uppercase tracking-widest rounded-xl transition-all shadow-lg active:scale-95 flex items-center justify-center gap-2"
+                  >
+                    <Download size={18} />
+                    PDF
+                  </button>
+                )}
                 <button 
                   type="submit"
                   className="flex-1 py-4 bg-emerald-600 hover:bg-emerald-500 text-white font-black uppercase tracking-widest rounded-xl transition-all shadow-lg active:scale-95 flex items-center justify-center gap-2"

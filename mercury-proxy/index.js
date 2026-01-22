@@ -97,6 +97,88 @@ app.get('/api/mercury/credit-cards', async (req, res) => {
   }
 });
 
+// Proxy: GET /api/mercury/credit (Mercury Credit endpoint - returns credit account info)
+app.get('/api/mercury/credit', async (req, res) => {
+  if (!MERCURY_API_KEY) {
+    return res.status(500).json({ error: 'MERCURY_API_KEY not configured on server' });
+  }
+  
+  try {
+    console.log('[Proxy] Fetching credit account info...');
+    const response = await fetch('https://api.mercury.com/api/v1/credit', {
+      headers: {
+        'Authorization': `Bearer ${MERCURY_API_KEY}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    const data = await response.json();
+    console.log('[Proxy] Credit account response status:', response.status);
+    console.log('[Proxy] Credit account data:', JSON.stringify(data, null, 2));
+    res.status(response.status).json(data);
+  } catch (error) {
+    console.error('[Proxy] Error fetching credit account:', error);
+    res.status(500).json({ error: 'Proxy error', message: error.message });
+  }
+});
+
+// Proxy: GET /api/mercury/credit/transactions (Credit card transactions)
+app.get('/api/mercury/credit/transactions', async (req, res) => {
+  if (!MERCURY_API_KEY) {
+    return res.status(500).json({ error: 'MERCURY_API_KEY not configured on server' });
+  }
+  
+  try {
+    // First get the credit account ID
+    console.log('[Proxy] Step 1: Fetching credit account ID...');
+    const creditResponse = await fetch('https://api.mercury.com/api/v1/credit', {
+      headers: {
+        'Authorization': `Bearer ${MERCURY_API_KEY}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    const creditData = await creditResponse.json();
+    console.log('[Proxy] Credit data:', JSON.stringify(creditData, null, 2));
+    
+    // Extract credit account ID (Mercury may return it in different formats)
+    const creditAccountId = creditData.id || creditData.accountId || creditData.creditAccountId || 
+                           (creditData.accounts && creditData.accounts[0]?.id) ||
+                           (creditData.creditCards && creditData.creditCards[0]?.id);
+    
+    if (!creditAccountId) {
+      console.log('[Proxy] No credit account ID found in response');
+      return res.status(404).json({ error: 'No credit account found', creditData });
+    }
+    
+    // Now fetch transactions for the credit account
+    const queryString = req.url.includes('?') ? req.url.substring(req.url.indexOf('?')) : '';
+    const txnUrl = `https://api.mercury.com/api/v1/account/${creditAccountId}/transactions${queryString}`;
+    
+    console.log('[Proxy] Step 2: Fetching credit transactions from:', txnUrl);
+    const txnResponse = await fetch(txnUrl, {
+      headers: {
+        'Authorization': `Bearer ${MERCURY_API_KEY}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    const txnData = await txnResponse.json();
+    console.log('[Proxy] Credit transactions response status:', txnResponse.status);
+    console.log('[Proxy] Credit transactions count:', txnData.transactions?.length || 0);
+    
+    // Return transactions with credit account info
+    res.status(txnResponse.status).json({
+      ...txnData,
+      creditAccountId,
+      source: 'mercury_credit'
+    });
+  } catch (error) {
+    console.error('[Proxy] Error fetching credit transactions:', error);
+    res.status(500).json({ error: 'Proxy error', message: error.message });
+  }
+});
+
 // Proxy: GET /api/mercury/transactions (GLOBAL endpoint - all transactions)
 app.get('/api/mercury/transactions', async (req, res) => {
   if (!MERCURY_API_KEY) {

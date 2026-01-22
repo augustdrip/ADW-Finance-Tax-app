@@ -156,6 +156,123 @@ export const mercuryService = {
   },
 
   /**
+   * Fetches the Mercury credit account info (includes account ID needed for transactions)
+   */
+  async fetchCreditAccount(apiKey: string): Promise<any> {
+    const apiKeyStr = typeof apiKey === 'string' ? apiKey : String((apiKey as any) ?? '');
+    if (!apiKeyStr) return null;
+
+    console.log("[Mercury] 💳 Fetching credit account info...");
+    
+    try {
+      const response = await fetch(`${MERCURY_API_BASE}/credit`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${apiKeyStr}`,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        }
+      });
+
+      if (!response.ok) {
+        console.log(`[Mercury] 💳 Credit endpoint returned ${response.status}`);
+        return null;
+      }
+
+      const data = await response.json();
+      console.log("[Mercury] 💳 Credit account data:", JSON.stringify(data, null, 2));
+      return data;
+    } catch (error) {
+      console.log("[Mercury] 💳 Error fetching credit account:", error);
+      return null;
+    }
+  },
+
+  /**
+   * Fetches credit card transactions from Mercury using the /credit endpoint
+   * This is the proper way to get Mercury credit card transactions
+   */
+  async fetchCreditCardTransactions(apiKey: string): Promise<MercuryTransaction[]> {
+    const apiKeyStr = typeof apiKey === 'string' ? apiKey : String((apiKey as any) ?? '');
+    if (!apiKeyStr) return [];
+
+    console.log("[Mercury] 💳 Fetching credit card transactions via /credit/transactions...");
+    
+    const allTransactions: MercuryTransaction[] = [];
+    
+    try {
+      // Use the dedicated credit transactions endpoint on the proxy
+      let offset = 0;
+      const limit = 500;
+      let hasMore = true;
+      const startDate = '2020-01-01';
+      const endDate = new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0];
+
+      while (hasMore) {
+        const url = `${MERCURY_API_BASE}/credit/transactions?limit=${limit}&offset=${offset}&start=${startDate}&end=${endDate}`;
+        console.log(`[Mercury] 💳 Fetching: ${url}`);
+        
+        const response = await fetch(url, {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${apiKeyStr}`,
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+          }
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          console.log(`[Mercury] 💳 Credit transactions endpoint returned ${response.status}:`, errorData);
+          break;
+        }
+
+        const data = await response.json();
+        const transactions = data.transactions || [];
+        
+        console.log(`[Mercury] 💳 Received ${transactions.length} credit card transactions (creditAccountId: ${data.creditAccountId})`);
+        
+        // Mark these as credit card transactions
+        transactions.forEach((t: any) => {
+          t.isCreditCard = true;
+          t.source = 'mercury_credit';
+        });
+        
+        allTransactions.push(...transactions);
+
+        if (transactions.length < limit) {
+          hasMore = false;
+        } else {
+          offset += limit;
+          if (offset > 5000) hasMore = false;
+        }
+      }
+    } catch (error) {
+      console.log("[Mercury] 💳 Error fetching credit card transactions:", error);
+    }
+
+    // Also try the global transactions endpoint and filter for credit card transactions
+    if (allTransactions.length === 0) {
+      console.log("[Mercury] 💳 Trying to find credit card transactions in global endpoint...");
+      try {
+        const globalTxns = await this.fetchGlobalTransactions(apiKeyStr);
+        const creditTxns = globalTxns.filter(t => 
+          t.kind?.toLowerCase().includes('credit') || 
+          t.kind?.toLowerCase().includes('card') ||
+          (t as any).creditCardInfo
+        );
+        console.log(`[Mercury] 💳 Found ${creditTxns.length} credit card transactions in global endpoint`);
+        allTransactions.push(...creditTxns);
+      } catch (e) {
+        console.log("[Mercury] 💳 Global endpoint fallback failed:", e);
+      }
+    }
+
+    console.log(`[Mercury] 💳 Total credit card transactions: ${allTransactions.length}`);
+    return allTransactions;
+  },
+
+  /**
    * Fetches transactions from the GLOBAL /transactions endpoint
    * This might return transactions not visible in account-specific endpoints
    */
@@ -319,6 +436,15 @@ export const mercuryService = {
         console.log(`[Mercury] Global endpoint not available, using account-specific only`);
       }
 
+      // Step 2c: Fetch credit card transactions (separate from bank accounts)
+      let creditCardTransactions: MercuryTransaction[] = [];
+      try {
+        creditCardTransactions = await this.fetchCreditCardTransactions(key);
+        console.log(`[Mercury] 💳 Credit card transactions: ${creditCardTransactions.length}`);
+      } catch (err) {
+        console.log(`[Mercury] 💳 Credit card transactions not available`);
+      }
+
       // Merge and deduplicate by ID (global might have same transactions)
       const transactionMap = new Map<string, MercuryTransaction>();
       
@@ -336,8 +462,20 @@ export const mercuryService = {
         }
       }
       
+      // Add credit card transactions
+      let newFromCreditCard = 0;
+      for (const t of creditCardTransactions) {
+        if (!transactionMap.has(t.id)) {
+          transactionMap.set(t.id, t);
+          newFromCreditCard++;
+        }
+      }
+      
       if (newFromGlobal > 0) {
         console.log(`[Mercury] ✨ Found ${newFromGlobal} NEW transactions from global endpoint!`);
+      }
+      if (newFromCreditCard > 0) {
+        console.log(`[Mercury] 💳 Found ${newFromCreditCard} NEW transactions from credit card endpoint!`);
       }
 
       const allTransactions = Array.from(transactionMap.values());
@@ -439,14 +577,16 @@ export const mercuryService = {
   }> {
     const key = apiKey || getMercuryKey();
     
-    // Fetch both accounts AND credit cards
-    const [accounts, creditCards] = await Promise.all([
+    // Fetch accounts, credit cards, AND the /credit endpoint for full credit info
+    const [accounts, creditCards, creditAccount] = await Promise.all([
       this.fetchAccounts(key),
-      this.fetchCreditCards(key)
+      this.fetchCreditCards(key),
+      this.fetchCreditAccount(key)
     ]);
     
     console.log("[Mercury] All accounts (raw):", JSON.stringify(accounts, null, 2));
     console.log("[Mercury] All credit cards (raw):", JSON.stringify(creditCards, null, 2));
+    console.log("[Mercury] Credit account (raw):", JSON.stringify(creditAccount, null, 2));
     
     let checking = 0;
     let savings = 0;
@@ -492,7 +632,7 @@ export const mercuryService = {
         creditAvailable = Math.abs(available);
         creditLimit = (acc as any).creditLimit || (acc as any).limit || credit + creditAvailable;
         creditPending = (acc as any).pendingBalance || (acc as any).pending || 0;
-        console.log("[Mercury] ✅ Credit card FOUND:", { 
+        console.log("[Mercury] ✅ Credit card FOUND in accounts:", { 
           name: acc.name, 
           type: acc.type,
           credit, 
@@ -537,8 +677,80 @@ export const mercuryService = {
       console.log("[Mercury] ✅ Credit card from dedicated endpoint:", { credit, creditAvailable, creditLimit, creditPending });
     }
     
+    // Process the /credit endpoint data (most reliable for credit balance)
+    if (creditAccount) {
+      console.log("[Mercury] Processing /credit endpoint data...");
+      
+      // Mercury /credit endpoint may have various structures
+      const creditData = creditAccount.credit || creditAccount;
+      
+      // Extract credit info - try various possible field names
+      const newCredit = Math.abs(
+        creditData.currentBalance || 
+        creditData.balance || 
+        creditData.outstandingBalance ||
+        creditData.totalBalance ||
+        credit // fallback to what we found before
+      );
+      
+      const newCreditAvailable = Math.abs(
+        creditData.availableCredit || 
+        creditData.availableBalance || 
+        creditData.remainingCredit ||
+        creditAvailable
+      );
+      
+      const newCreditLimit = 
+        creditData.creditLimit || 
+        creditData.limit || 
+        creditData.totalCreditLimit ||
+        (newCredit + newCreditAvailable) ||
+        creditLimit;
+      
+      const newCreditPending = Math.abs(
+        creditData.pendingBalance || 
+        creditData.pendingCharges ||
+        creditData.pending ||
+        creditPending
+      );
+      
+      // Only update if we got meaningful data
+      if (newCredit > 0 || newCreditAvailable > 0 || newCreditLimit > 0) {
+        credit = newCredit;
+        creditAvailable = newCreditAvailable;
+        creditLimit = newCreditLimit;
+        creditPending = newCreditPending;
+        
+        console.log("[Mercury] ✅ Credit from /credit endpoint:", { 
+          credit, 
+          creditAvailable, 
+          creditLimit, 
+          creditPending,
+          creditAccountId: creditData.id || creditData.accountId
+        });
+        
+        // Add to account details if not already there
+        if (!accountDetails.some(a => a.type === 'credit_card' || a.type === 'credit')) {
+          accountDetails.push({ 
+            name: creditData.name || 'Mercury Credit', 
+            type: 'credit', 
+            balance: credit 
+          });
+        }
+      }
+    }
+    
     const total = checking + savings;
-    console.log("[Mercury] Final: Checking:", checking, "Savings:", savings, "Credit:", credit, "CreditAvailable:", creditAvailable, "Total:", total);
+    console.log("[Mercury] ════════════════════════════════════════");
+    console.log("[Mercury] 💰 FINAL BALANCES:");
+    console.log("[Mercury]   Checking:", checking);
+    console.log("[Mercury]   Savings:", savings);
+    console.log("[Mercury]   💳 Credit Balance:", credit);
+    console.log("[Mercury]   💳 Credit Available:", creditAvailable);
+    console.log("[Mercury]   💳 Credit Limit:", creditLimit);
+    console.log("[Mercury]   💳 Credit Pending:", creditPending);
+    console.log("[Mercury]   Total Liquidity:", total);
+    console.log("[Mercury] ════════════════════════════════════════");
     
     return { total, checking, savings, credit, creditLimit, creditAvailable, creditPending, accounts: accountDetails };
   },
@@ -599,5 +811,124 @@ export const mercuryService = {
     if (text.includes("legal") || text.includes("cpa") || text.includes("law") || text.includes("attorney")) return "Legal/Professional";
     if (text.includes("uber") || text.includes("lyft") || text.includes("doordash")) return "Travel/Meals";
     return "Operations";
+  },
+
+  /**
+   * Parse CSV credit card statement
+   * Supports common formats: Chase, Amex, Capital One, generic
+   */
+  parseCreditCardCSV(csvContent: string, cardName: string = 'External Card'): Transaction[] {
+    const lines = csvContent.trim().split('\n');
+    if (lines.length < 2) return [];
+
+    // Detect CSV format by header
+    const header = lines[0].toLowerCase();
+    const transactions: Transaction[] = [];
+
+    // Column index detection for different card formats
+    let dateIdx = 0, descIdx = 1, amountIdx = 2, categoryIdx = -1;
+
+    if (header.includes('transaction date')) {
+      // Chase format: Transaction Date,Post Date,Description,Category,Type,Amount,Memo
+      const cols = lines[0].split(',');
+      dateIdx = cols.findIndex(c => c.toLowerCase().includes('transaction date'));
+      descIdx = cols.findIndex(c => c.toLowerCase() === 'description');
+      amountIdx = cols.findIndex(c => c.toLowerCase() === 'amount');
+      categoryIdx = cols.findIndex(c => c.toLowerCase() === 'category');
+    } else if (header.includes('date') && header.includes('description')) {
+      // Amex format: Date,Description,Amount
+      const cols = lines[0].split(',');
+      dateIdx = cols.findIndex(c => c.toLowerCase() === 'date');
+      descIdx = cols.findIndex(c => c.toLowerCase() === 'description');
+      amountIdx = cols.findIndex(c => c.toLowerCase() === 'amount');
+    } else if (header.includes('posted date')) {
+      // Capital One format: Posted Date,Transaction Date,Card No.,Description,Category,Debit,Credit
+      const cols = lines[0].split(',');
+      dateIdx = cols.findIndex(c => c.toLowerCase().includes('posted date'));
+      descIdx = cols.findIndex(c => c.toLowerCase() === 'description');
+      // Capital One uses separate Debit/Credit columns
+      const debitIdx = cols.findIndex(c => c.toLowerCase() === 'debit');
+      amountIdx = debitIdx >= 0 ? debitIdx : cols.findIndex(c => c.toLowerCase() === 'amount');
+      categoryIdx = cols.findIndex(c => c.toLowerCase() === 'category');
+    }
+
+    // Parse data rows (skip header)
+    for (let i = 1; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (!line) continue;
+
+      // Handle CSV with quoted fields
+      const cols = this.parseCSVLine(line);
+      if (cols.length < 3) continue;
+
+      const dateStr = cols[dateIdx]?.trim();
+      const description = cols[descIdx]?.trim() || 'Unknown';
+      let amount = parseFloat(cols[amountIdx]?.replace(/[$,]/g, '') || '0');
+
+      // Skip if invalid
+      if (!dateStr || isNaN(amount) || amount === 0) continue;
+
+      // Normalize amount (positive = expense for credit cards)
+      amount = Math.abs(amount);
+
+      // Parse date (handle various formats)
+      let date: Date;
+      if (dateStr.includes('/')) {
+        // MM/DD/YYYY or M/D/YY
+        const parts = dateStr.split('/');
+        const month = parseInt(parts[0]) - 1;
+        const day = parseInt(parts[1]);
+        let year = parseInt(parts[2]);
+        if (year < 100) year += 2000;
+        date = new Date(year, month, day);
+      } else {
+        date = new Date(dateStr);
+      }
+
+      if (isNaN(date.getTime())) continue;
+
+      // Guess category from description or use provided category
+      const category = categoryIdx >= 0 && cols[categoryIdx] 
+        ? cols[categoryIdx].trim() 
+        : this.guessCategory(description, description);
+
+      transactions.push({
+        id: `cc_${cardName.replace(/\s+/g, '_')}_${Date.now()}_${i}`,
+        date: date.toISOString().split('T')[0],
+        vendor: description,
+        amount,
+        category,
+        context: `Credit Card: ${cardName}`,
+        attachments: [],
+        bankVerified: false,
+        madeBy: undefined
+      });
+    }
+
+    console.log(`[CreditCard] Parsed ${transactions.length} transactions from ${cardName} CSV`);
+    return transactions;
+  },
+
+  /**
+   * Helper to parse CSV line handling quoted fields
+   */
+  parseCSVLine(line: string): string[] {
+    const result: string[] = [];
+    let current = '';
+    let inQuotes = false;
+
+    for (let i = 0; i < line.length; i++) {
+      const char = line[i];
+      if (char === '"') {
+        inQuotes = !inQuotes;
+      } else if (char === ',' && !inQuotes) {
+        result.push(current.trim());
+        current = '';
+      } else {
+        current += char;
+      }
+    }
+    result.push(current.trim());
+    return result;
   }
 };
