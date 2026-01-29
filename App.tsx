@@ -1,5 +1,5 @@
-
 import React, { useState, useMemo, useRef, useEffect } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { 
   LayoutDashboard, 
   Receipt, 
@@ -63,7 +63,16 @@ import {
   ZoomIn,
   Unlink,
   Link2,
-  Settings
+  Settings,
+  Home,
+  Flame,
+  Droplets,
+  Wifi,
+  Building2,
+  Clock,
+  AlertTriangle,
+  LogOut,
+  User
 } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { jsPDF } from 'jspdf';
@@ -72,6 +81,129 @@ import { analyzeTransaction, streamStrategyChat, enhanceBusinessContext, generat
 import { db } from './services/supabaseService';
 import { mercuryService, hasMercuryEnvKey } from './services/mercuryService';
 import { receiptsService, Receipt as ReceiptData } from './services/receiptsService';
+import { chatHistoryService, ChatSession, ChatMessage as ChatHistoryMessage } from './services/chatHistoryService';
+import { embeddingService } from './services/embeddingService';
+import { billsService, Bill, BillCategory, billsHelpers, BillWithTransactions, MatchedTransaction } from './services/billsService';
+import { credentialsService, AccountCredential } from './services/credentialsService';
+import { useAuthSafe } from './src/hooks/useAuth';
+
+// Premium Animation Variants
+const pageTransition = {
+  initial: { opacity: 0, y: 20, filter: 'blur(10px)' },
+  animate: { opacity: 1, y: 0, filter: 'blur(0px)' },
+  exit: { opacity: 0, y: -20, filter: 'blur(10px)' }
+};
+
+const staggerContainer = {
+  animate: {
+    transition: {
+      staggerChildren: 0.08,
+      delayChildren: 0.1
+    }
+  }
+};
+
+const staggerItem = {
+  initial: { opacity: 0, y: 30, scale: 0.95 },
+  animate: { 
+    opacity: 1, 
+    y: 0, 
+    scale: 1,
+    transition: { 
+      type: 'spring' as const, 
+      stiffness: 100, 
+      damping: 15,
+      mass: 0.8
+    }
+  }
+};
+
+const cardHover = {
+  rest: { scale: 1, y: 0 },
+  hover: { 
+    scale: 1.02, 
+    y: -4,
+    transition: { 
+      type: 'spring', 
+      stiffness: 400, 
+      damping: 25 
+    }
+  },
+  tap: { scale: 0.98 }
+};
+
+const glowPulse = {
+  animate: {
+    boxShadow: [
+      '0 0 20px rgba(99, 102, 241, 0.1)',
+      '0 0 40px rgba(99, 102, 241, 0.2)',
+      '0 0 20px rgba(99, 102, 241, 0.1)'
+    ],
+    transition: {
+      duration: 3,
+      repeat: Infinity,
+      ease: 'easeInOut'
+    }
+  }
+};
+
+const modalOverlay = {
+  initial: { opacity: 0 },
+  animate: { opacity: 1 },
+  exit: { opacity: 0 }
+};
+
+const modalContent = {
+  initial: { opacity: 0, scale: 0.9, y: 40 },
+  animate: { 
+    opacity: 1, 
+    scale: 1, 
+    y: 0,
+    transition: { 
+      type: 'spring', 
+      stiffness: 300, 
+      damping: 30 
+    }
+  },
+  exit: { 
+    opacity: 0, 
+    scale: 0.95, 
+    y: 20,
+    transition: { duration: 0.2 }
+  }
+};
+
+const slideIn = {
+  initial: { opacity: 0, x: -20 },
+  animate: { opacity: 1, x: 0 },
+  exit: { opacity: 0, x: 20 }
+};
+
+const fadeUp = {
+  initial: { opacity: 0, y: 20 },
+  animate: { opacity: 1, y: 0 },
+  exit: { opacity: 0, y: -10 }
+};
+
+const scaleIn = {
+  initial: { opacity: 0, scale: 0.8 },
+  animate: { 
+    opacity: 1, 
+    scale: 1,
+    transition: { type: 'spring', stiffness: 200, damping: 20 }
+  }
+};
+
+const shimmer = {
+  animate: {
+    backgroundPosition: ['200% 0', '-200% 0'],
+    transition: {
+      duration: 8,
+      repeat: Infinity,
+      ease: 'linear'
+    }
+  }
+};
 
 const COMPANY_INFO = {
   name: "Agency Dev Works",
@@ -107,11 +239,26 @@ const MOCK_DATA = {
 };
 
 const App: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'transactions' | 'receipts' | 'agreements' | 'invoices' | 'chat' | 'tax' | 'assets'>('dashboard');
+  // Auth context - null when not wrapped in AuthProvider (direct access mode)
+  const auth = useAuthSafe();
+  
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'transactions' | 'receipts' | 'agreements' | 'invoices' | 'chat' | 'tax' | 'assets' | 'bills'>('dashboard');
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [agreements, setAgreements] = useState<ClientAgreement[]>([]);
   const [assets, setAssets] = useState<CompanyAsset[]>([]);
+  
+  // Bills State
+  const [bills, setBills] = useState<Bill[]>([]);
+  const [billsWithTransactions, setBillsWithTransactions] = useState<BillWithTransactions[]>([]);
+  const [showAddBillModal, setShowAddBillModal] = useState(false);
+  const [editingBill, setEditingBill] = useState<Bill | null>(null);
+  const [expandedBillId, setExpandedBillId] = useState<string | null>(null);
+  
+  // Credentials State (for utility accounts)
+  const [credentials, setCredentials] = useState<AccountCredential[]>([]);
+  const [showCredentials, setShowCredentials] = useState(false);
+  const [revealedPasswords, setRevealedPasswords] = useState<Set<string>>(new Set());
   
   // Receipts from adw-receipts Supabase project
   const [receipts, setReceipts] = useState<ReceiptData[]>([]);
@@ -189,6 +336,86 @@ const App: React.FC = () => {
     { id: '1', role: 'assistant', content: 'Agency Dev Works Strategist online. Knowledge base: Internal Revenue Code 2024. Bank connection: Mercury Protocol established. How shall we optimize your tax posture today?', timestamp: Date.now() }
   ]);
   const [isTyping, setIsTyping] = useState(false);
+  
+  // Chat History State (RAG + Persistence)
+  const [chatSessions, setChatSessions] = useState<ChatSession[]>([]);
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const [showChatHistory, setShowChatHistory] = useState(false);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  
+  // Load chat sessions on mount
+  useEffect(() => {
+    const loadChatHistory = async () => {
+      setIsLoadingHistory(true);
+      try {
+        const sessions = await chatHistoryService.getAllSessions();
+        setChatSessions(sessions);
+        
+        // Load current session or create new one
+        const currentSession = await chatHistoryService.getCurrentSession();
+        setCurrentSessionId(currentSession.id);
+        
+        // If session has messages, load them
+        if (currentSession.messages.length > 0) {
+          setChatMessages(currentSession.messages);
+        }
+      } catch (e) {
+        console.error('[ChatHistory] Failed to load:', e);
+      } finally {
+        setIsLoadingHistory(false);
+      }
+    };
+    loadChatHistory();
+  }, []);
+  
+  // Save chat messages when they change
+  useEffect(() => {
+    if (currentSessionId && chatMessages.length > 1) {
+      chatHistoryService.updateSessionMessages(currentSessionId, chatMessages)
+        .then(() => {
+          // Refresh sessions list
+          chatHistoryService.getAllSessions().then(setChatSessions);
+        })
+        .catch(console.error);
+    }
+  }, [chatMessages, currentSessionId]);
+  
+  // Create new chat session
+  const handleNewChat = () => {
+    const newSession = chatHistoryService.createSession();
+    setCurrentSessionId(newSession.id);
+    setChatMessages([
+      { id: '1', role: 'assistant', content: 'Agency Dev Works Strategist online. Knowledge base: Internal Revenue Code 2024. Bank connection: Mercury Protocol established. How shall we optimize your tax posture today?', timestamp: Date.now() }
+    ]);
+    chatHistoryService.getAllSessions().then(setChatSessions);
+    setShowChatHistory(false);
+  };
+  
+  // Load a previous chat session
+  const handleLoadSession = async (sessionId: string) => {
+    const session = await chatHistoryService.getSession(sessionId);
+    if (session) {
+      setCurrentSessionId(session.id);
+      setChatMessages(session.messages.length > 0 ? session.messages : [
+        { id: '1', role: 'assistant', content: 'Agency Dev Works Strategist online. Knowledge base: Internal Revenue Code 2024. Bank connection: Mercury Protocol established. How shall we optimize your tax posture today?', timestamp: Date.now() }
+      ]);
+      chatHistoryService.setCurrentSession(session.id);
+    }
+    setShowChatHistory(false);
+  };
+  
+  // Delete a chat session
+  const handleDeleteSession = async (sessionId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    await chatHistoryService.deleteSession(sessionId);
+    const sessions = await chatHistoryService.getAllSessions();
+    setChatSessions(sessions);
+    
+    // If we deleted the current session, create a new one
+    if (sessionId === currentSessionId) {
+      handleNewChat();
+    }
+  };
   
   // AI Monthly Summary State
   const [monthlySummary, setMonthlySummary] = useState<MonthlySummary | null>(() => {
@@ -287,6 +514,9 @@ const App: React.FC = () => {
       
       // Load receipts from adw-receipts Supabase (separate project)
       loadReceipts();
+      
+      // Load bills
+      loadBills();
     } catch (e) {
       console.error("Load Error:", e);
       // Fallback to localStorage then mock data
@@ -322,6 +552,48 @@ const App: React.FC = () => {
       setIsLoadingReceipts(false);
     }
   };
+  
+  // Load bills and credentials
+  const loadBills = async () => {
+    try {
+      // Initialize default bills (rent) if first time
+      await billsService.initializeDefaultBills();
+      const fetchedBills = await billsService.getAllBills();
+      setBills(fetchedBills);
+      console.log(`[Bills] Loaded ${fetchedBills.length} bills`);
+      
+      // Initialize and load credentials
+      await credentialsService.initializeUtilityCredentials();
+      const fetchedCredentials = await credentialsService.getAllCredentials();
+      setCredentials(fetchedCredentials);
+      console.log(`[Credentials] Loaded ${fetchedCredentials.length} account credentials`);
+    } catch (error) {
+      console.error('[Bills] Failed to load bills:', error);
+    }
+  };
+  
+  // Match transactions to bills when transactions change
+  useEffect(() => {
+    const matchBillsToTransactions = async () => {
+      if (transactions.length === 0) return;
+      
+      // Convert transactions to MatchedTransaction format
+      const matchableTransactions: MatchedTransaction[] = transactions.map(t => ({
+        id: t.id,
+        date: t.date,
+        vendor: t.vendor,
+        amount: t.amount,
+        category: t.category,
+        context: t.context
+      }));
+      
+      const billsWithTxns = await billsService.getBillsWithTransactions(matchableTransactions);
+      setBillsWithTransactions(billsWithTxns);
+      console.log(`[Bills] Matched transactions to ${billsWithTxns.filter(b => b.matchedTransactions.length > 0).length} bills`);
+    };
+    
+    matchBillsToTransactions();
+  }, [transactions, bills]);
 
   // Link a receipt to a transaction (now saves to database!)
   const handleLinkReceipt = async (receiptId: string, transactionId: string) => {
@@ -863,6 +1135,49 @@ const App: React.FC = () => {
     setChatMessages(prev => [...prev, userMsg]);
     setIsTyping(true);
 
+    // Build comprehensive RAG context with all app data
+    const appData = {
+      transactions: transactions.map(t => ({
+        vendor: t.vendor,
+        amount: t.amount,
+        category: t.category,
+        date: t.date,
+        context: t.context
+      })),
+      invoices: invoices.map(i => ({
+        invoiceNumber: i.invoiceNumber,
+        clientName: i.clientName,
+        amount: i.amount,
+        status: i.status,
+        dueDate: i.dueDate
+      })),
+      agreements: agreements.map(a => ({
+        clientName: a.clientName,
+        value: a.value,
+        status: a.status,
+        scopeOfWork: a.scopeOfWork
+      })),
+      accountBalances: {
+        checking: accountBalances.checking,
+        savings: accountBalances.savings,
+        credit: accountBalances.credit,
+        creditAvailable: accountBalances.creditAvailable,
+        creditLimit: accountBalances.creditLimit
+      },
+      receipts: receipts.map(r => ({
+        merchant: r.vendor_name || undefined,
+        amount: r.amount || undefined,
+        date: r.receipt_date || undefined
+      })),
+      taxSummary: {
+        totalIncome: taxSummary.grossIncome,
+        totalExpenses: taxSummary.totalExpenses,
+        netProfit: taxSummary.netProfit,
+        estimatedTax: taxSummary.estimatedSelfEmploymentTax
+      }
+    };
+
+    // Legacy context for fallback
     const context = `
       LEDGER TOTAL: $${stats.totalSpent.toLocaleString()}
       REVENUE YTD: $${taxSummary.grossIncome.toLocaleString()}
@@ -877,7 +1192,8 @@ const App: React.FC = () => {
     let assistantMsgContent = '';
 
     try {
-      await streamStrategyChat(message, chatMessages.slice(-5), context, (chunk: string) => {
+      // Pass full app data for RAG-enhanced responses
+      await streamStrategyChat(message, chatMessages.slice(-10), context, (chunk: string) => {
         setIsTyping(false);
         assistantMsgContent += chunk;
         setChatMessages(prev => {
@@ -885,7 +1201,7 @@ const App: React.FC = () => {
           if (existing) return prev.map(m => m.id === assistantMsgId ? { ...m, content: assistantMsgContent } : m);
           return [...prev, { id: assistantMsgId, role: 'assistant', content: assistantMsgContent, timestamp: Date.now() }];
         });
-      });
+      }, appData);
     } catch (error) {
       console.error(error);
       setIsTyping(false);
@@ -1152,31 +1468,52 @@ const App: React.FC = () => {
       <aside className={`bg-[#0F0F12] border-r border-white/5 transition-all duration-300 ${isSidebarOpen ? 'w-64' : 'w-20'} flex flex-col z-20`}>
         <div className="p-6 border-b border-white/5 bg-[#0F0F12]/50 backdrop-blur-md"><Logo /></div>
         {/* Sidebar Navigation - Updated Jan 21 2026 */}
-        <nav className="flex-1 px-4 space-y-1 mt-6 overflow-y-auto custom-scrollbar">
+        <motion.nav 
+          className="flex-1 px-4 space-y-1 mt-6 overflow-y-auto custom-scrollbar"
+          initial="initial"
+          animate="animate"
+          variants={staggerContainer}
+        >
           {[
             { id: 'dashboard', icon: LayoutDashboard, label: 'Strategist HQ' },
             { id: 'transactions', icon: Receipt, label: 'Expenditures' },
             { id: 'receipts', icon: Paperclip, label: 'Receipt Vault' },
             { id: 'agreements', icon: FileSignature, label: 'Service Agreements' },
             { id: 'invoices', icon: CreditCard, label: 'Revenue Log' },
+            { id: 'bills', icon: Home, label: 'Bills & Utilities' },
             { id: 'tax', icon: Calculator, label: 'Tax Center' },
             { id: 'assets', icon: HardDrive, label: 'Asset Vault' },
             { id: 'chat', icon: Sparkles, label: 'AI War Room' },
-          ].map((item) => (
-            <button
+          ].map((item, index) => (
+            <motion.button
               key={item.id}
+              variants={staggerItem}
+              whileHover={{ x: 4, transition: { type: 'spring', stiffness: 400 } }}
+              whileTap={{ scale: 0.98 }}
               onClick={() => setActiveTab(item.id as any)}
-              className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl transition-all duration-200 ${
+              className={`relative w-full flex items-center gap-3 px-3 py-3 rounded-xl transition-colors duration-200 ${
                 activeTab === item.id 
-                  ? 'bg-indigo-600/10 text-indigo-400 border border-indigo-500/20' 
-                  : 'text-slate-500 hover:bg-white/5 hover:text-slate-300'
+                  ? 'bg-indigo-600/10 text-indigo-400 border border-indigo-500/20 shadow-lg shadow-indigo-500/10' 
+                  : 'text-slate-500 hover:bg-white/5 hover:text-slate-300 border border-transparent'
               }`}
             >
-              <item.icon size={20} />
+              <motion.div
+                animate={activeTab === item.id ? { scale: [1, 1.2, 1] } : {}}
+                transition={{ duration: 0.3 }}
+              >
+                <item.icon size={20} />
+              </motion.div>
               {isSidebarOpen && <span className="font-medium text-sm">{item.label}</span>}
-            </button>
+              {activeTab === item.id && (
+                <motion.div
+                  layoutId="activeTabIndicator"
+                  className="absolute left-0 w-1 h-8 bg-gradient-to-b from-indigo-400 to-purple-500 rounded-r-full"
+                  transition={{ type: 'spring', stiffness: 500, damping: 30 }}
+                />
+              )}
+            </motion.button>
           ))}
-        </nav>
+        </motion.nav>
         <div className="p-4 border-t border-white/5">
           <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="w-full flex items-center gap-3 px-3 py-2 text-slate-500 hover:text-white transition-colors">
             <ChevronRight size={16} className={`transition-transform duration-300 ${isSidebarOpen ? 'rotate-180' : ''}`} />
@@ -1204,24 +1541,75 @@ const App: React.FC = () => {
               <Bell size={18} />
               <span className="absolute top-1 right-1.5 w-2 h-2 bg-indigo-500 rounded-full border border-[#09090A]"></span>
             </button>
+            
+            {/* User Menu & Logout */}
+            {auth?.user && (
+              <div className="flex items-center gap-2 ml-2 pl-4 border-l border-white/10">
+                <div className="flex items-center gap-2">
+                  {auth.user.user_metadata?.avatar_url ? (
+                    <img 
+                      src={auth.user.user_metadata.avatar_url} 
+                      alt="Profile" 
+                      className="w-8 h-8 rounded-full border border-white/10"
+                    />
+                  ) : (
+                    <div className="w-8 h-8 rounded-full bg-indigo-500/20 flex items-center justify-center">
+                      <User size={16} className="text-indigo-400" />
+                    </div>
+                  )}
+                  <span className="text-xs text-slate-400 hidden sm:block max-w-[120px] truncate">
+                    {auth.user.email}
+                  </span>
+                </div>
+                <button 
+                  onClick={() => auth.signOut()} 
+                  className="p-2 text-slate-400 hover:text-rose-400 transition-colors" 
+                  title="Sign Out"
+                >
+                  <LogOut size={18} />
+                </button>
+              </div>
+            )}
           </div>
         </header>
 
         <div className="p-8 max-w-7xl mx-auto space-y-8 pb-20">
+          <AnimatePresence mode="wait">
           {activeTab === 'dashboard' && (
-            <div className="space-y-8 animate-in fade-in duration-500">
+            <motion.div 
+              key="dashboard"
+              initial="initial"
+              animate="animate"
+              exit="exit"
+              variants={pageTransition}
+              transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+              className="space-y-8"
+            >
               
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                <div className="lg:col-span-2 relative overflow-hidden bg-indigo-600/10 border border-indigo-500/20 rounded-[2rem] p-8 shadow-2xl group">
-                  <div className="absolute top-0 right-0 p-8 opacity-10 group-hover:opacity-20 transition-opacity">
+              <motion.div 
+                className="grid grid-cols-1 lg:grid-cols-3 gap-6"
+                variants={staggerContainer}
+                initial="initial"
+                animate="animate"
+              >
+                <motion.div 
+                  variants={staggerItem}
+                  whileHover={{ y: -4, transition: { type: 'spring', stiffness: 300 } }}
+                  className="lg:col-span-2 relative overflow-hidden bg-indigo-600/10 border border-indigo-500/20 rounded-[2rem] p-8 shadow-2xl group"
+                >
+                  <div className="absolute top-0 right-0 p-8 opacity-10 group-hover:opacity-20 transition-opacity duration-500">
                     <Sparkles size={120} className="text-indigo-400" />
                   </div>
                   <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
                     <div className="space-y-2">
                       <div className="flex items-center gap-2">
-                        <div className="p-1.5 bg-indigo-500 text-white rounded-lg shadow-lg shadow-indigo-500/20 animate-pulse">
+                        <motion.div 
+                          className="p-1.5 bg-indigo-500 text-white rounded-lg shadow-lg shadow-indigo-500/20"
+                          animate={{ scale: [1, 1.1, 1], opacity: [0.8, 1, 0.8] }}
+                          transition={{ duration: 2, repeat: Infinity, ease: 'easeInOut' }}
+                        >
                           <Zap size={16} fill="currentColor" />
-                        </div>
+                        </motion.div>
                         <span className="text-[10px] font-black text-indigo-400 uppercase tracking-widest">Immediate Breakthrough Insights</span>
                       </div>
                       <h2 className="text-2xl font-black text-white leading-tight">Optimizing IRC § 41 R&D Pipeline</h2>
@@ -1229,15 +1617,23 @@ const App: React.FC = () => {
                         Strategist analysis detected 3 high-probability tax deductions waiting for verification. Increase Audit Shield to 98% with one click.
                       </p>
                     </div>
-                    <div className="flex flex-col items-center bg-[#09090A]/40 backdrop-blur-md p-4 rounded-2xl border border-white/5 min-w-[120px]">
+                    <motion.div 
+                      className="flex flex-col items-center bg-[#09090A]/40 backdrop-blur-md p-4 rounded-2xl border border-white/5 min-w-[120px]"
+                      whileHover={{ scale: 1.05 }}
+                      transition={{ type: 'spring', stiffness: 400 }}
+                    >
                       <span className="text-lg font-black text-emerald-400">$4,250</span>
                       <span className="text-[8px] font-bold text-slate-500 uppercase tracking-widest">Potential Shield</span>
-                    </div>
+                    </motion.div>
                   </div>
-                </div>
+                </motion.div>
 
                 {/* Mercury Bank Status Card - Checking */}
-                <div className="bg-[#121216] border border-indigo-500/20 rounded-[2rem] p-8 shadow-2xl relative overflow-hidden group">
+                <motion.div 
+                  variants={staggerItem}
+                  whileHover={{ y: -4, scale: 1.02, transition: { type: 'spring', stiffness: 300 } }}
+                  className="bg-[#121216] border border-indigo-500/20 rounded-[2rem] p-8 shadow-2xl relative overflow-hidden group"
+                >
                    <div className="relative z-10 space-y-4">
                       <div className="flex justify-between items-start">
                         <div className="p-3 bg-indigo-600 rounded-2xl text-white shadow-xl shadow-indigo-600/20 group-hover:rotate-12 transition-transform">
@@ -1251,26 +1647,47 @@ const App: React.FC = () => {
                       </div>
                       <div className="pt-4 border-t border-white/5 flex justify-between items-center">
                          <div className="text-[9px] font-bold text-slate-500">Synced: {stats.lastSync}</div>
-                         <button onClick={() => handleMercurySync()} disabled={isMercurySyncing} className="text-[10px] font-black text-indigo-400 uppercase hover:text-white flex items-center gap-1.5 transition-colors">
+                         <motion.button 
+                           onClick={() => handleMercurySync()} 
+                           disabled={isMercurySyncing} 
+                           whileHover={{ scale: 1.05 }}
+                           whileTap={{ scale: 0.95 }}
+                           className="text-[10px] font-black text-indigo-400 uppercase hover:text-white flex items-center gap-1.5 transition-colors"
+                         >
                            {isMercurySyncing ? <Loader2 size={12} className="animate-spin" /> : <RefreshCcw size={12} />} 
                            Sync
-                         </button>
+                         </motion.button>
                       </div>
                    </div>
-                </div>
+                </motion.div>
 
                 {/* Mercury Bank Status Card - Savings */}
-                <div className="bg-[#121216] border border-emerald-500/20 rounded-[2rem] p-8 shadow-2xl relative overflow-hidden group">
+                <motion.div 
+                  variants={staggerItem}
+                  whileHover={{ y: -4, scale: 1.02, transition: { type: 'spring', stiffness: 300 } }}
+                  className="bg-[#121216] border border-emerald-500/20 rounded-[2rem] p-8 shadow-2xl relative overflow-hidden group"
+                >
                    <div className="relative z-10 space-y-4">
                       <div className="flex justify-between items-start">
-                        <div className="p-3 bg-emerald-600 rounded-2xl text-white shadow-xl shadow-emerald-600/20 group-hover:rotate-12 transition-transform">
+                        <motion.div 
+                          className="p-3 bg-emerald-600 rounded-2xl text-white shadow-xl shadow-emerald-600/20"
+                          whileHover={{ rotate: 12 }}
+                          transition={{ type: 'spring', stiffness: 300 }}
+                        >
                           <ShieldCheck size={24} />
-                        </div>
+                        </motion.div>
                         <span className="text-[8px] font-black text-emerald-400 border border-emerald-400/20 px-2 py-1 rounded-full uppercase tracking-widest">Savings</span>
                       </div>
                       <div>
                         <div className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mb-1">Reserve Account</div>
-                        <div className="text-3xl font-black text-emerald-400">${accountBalances.savings.toLocaleString()}</div>
+                        <motion.div 
+                          className="text-3xl font-black text-emerald-400"
+                          initial={{ opacity: 0, scale: 0.5 }}
+                          animate={{ opacity: 1, scale: 1 }}
+                          transition={{ delay: 0.3, type: 'spring' }}
+                        >
+                          ${accountBalances.savings.toLocaleString()}
+                        </motion.div>
                       </div>
                       <div className="pt-4 border-t border-white/5">
                          <div className="text-[9px] font-bold text-slate-500">
@@ -1278,11 +1695,53 @@ const App: React.FC = () => {
                          </div>
                       </div>
                    </div>
-                </div>
+                </motion.div>
+
+                {/* True Available - After CC Autopay */}
+                <motion.div 
+                  variants={staggerItem}
+                  whileHover={{ y: -4, scale: 1.02, transition: { type: 'spring', stiffness: 300 } }}
+                  className="bg-[#121216] border border-amber-500/20 rounded-[2rem] p-8 shadow-2xl relative overflow-hidden group"
+                >
+                   <div className="relative z-10 space-y-4">
+                      <div className="flex justify-between items-start">
+                        <div className="p-3 bg-amber-600 rounded-2xl text-white shadow-xl shadow-amber-600/20 group-hover:rotate-12 transition-transform">
+                          <Calculator size={24} />
+                        </div>
+                        <span className="text-[8px] font-black text-amber-400 border border-amber-400/20 px-2 py-1 rounded-full uppercase tracking-widest">Net Cash</span>
+                      </div>
+                      <div>
+                        <div className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mb-1">True Available</div>
+                        <div className="text-3xl font-black text-amber-400">
+                          ${Math.max(0, accountBalances.checking - accountBalances.credit).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </div>
+                      </div>
+                      <div className="pt-4 border-t border-white/5 space-y-1">
+                         <div className="text-[9px] font-bold text-slate-500 flex justify-between">
+                           <span>Operating:</span>
+                           <span className="text-white">${accountBalances.checking.toLocaleString()}</span>
+                         </div>
+                         <div className="text-[9px] font-bold text-slate-500 flex justify-between">
+                           <span>CC Autopay (1st):</span>
+                           <motion.span 
+                             className="text-red-400"
+                             animate={{ opacity: [0.7, 1, 0.7] }}
+                             transition={{ duration: 2, repeat: Infinity }}
+                           >
+                             -${accountBalances.credit.toLocaleString()}
+                           </motion.span>
+                         </div>
+                      </div>
+                   </div>
+                </motion.div>
 
                 {/* Mercury Credit Card */}
-                <div className="bg-[#121216] border border-indigo-500/20 rounded-[2rem] p-6 shadow-2xl relative overflow-hidden group">
-                   <div className="absolute inset-0 bg-gradient-to-br from-indigo-600/5 to-purple-600/5 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                <motion.div 
+                  variants={staggerItem}
+                  whileHover={{ y: -4, scale: 1.02, transition: { type: 'spring', stiffness: 300 } }}
+                  className="bg-[#121216] border border-indigo-500/20 rounded-[2rem] p-6 shadow-2xl relative overflow-hidden group"
+                >
+                   <div className="absolute inset-0 bg-gradient-to-br from-indigo-600/5 to-purple-600/5 opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
                    <div className="relative z-10 space-y-4">
                       <div className="flex justify-between items-start">
                         <div className="flex items-center gap-2">
@@ -1376,32 +1835,55 @@ const App: React.FC = () => {
                         </div>
                       )}
                    </div>
-                </div>
-              </div>
+                </motion.div>
+              </motion.div>
 
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+              <motion.div 
+                className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4"
+                variants={staggerContainer}
+                initial="initial"
+                animate="animate"
+              >
                 {[
+                  { label: 'True Available', value: `$${Math.max(0, accountBalances.checking - accountBalances.credit).toLocaleString()}`, icon: Calculator, trend: 'After CC Pay', color: 'text-amber-400', highlight: true },
                   { label: 'Expenditures', value: `$${stats.totalSpent.toLocaleString()}`, icon: Receipt, trend: '+12%', color: 'text-white', highlight: false },
                   { label: 'Mercury CC', value: `$${accountBalances.credit.toLocaleString()}`, icon: CreditCard, trend: `$${accountBalances.creditAvailable.toLocaleString()} avail`, color: 'text-indigo-400', highlight: false },
                   { label: 'Potential Deductions', value: `$${stats.totalPotentialDeductions.toLocaleString()}`, icon: Scale, trend: '+5.2%', color: 'text-emerald-400', highlight: true },
                   { label: 'Projected Tax Savings', value: `$${stats.projectedTaxSavings.toLocaleString()}`, icon: TrendingUp, trend: 'Optimal', color: 'text-purple-400', highlight: false },
                   { label: 'Strategy Score', value: `${stats.optimizationScore}%`, icon: Sparkles, trend: 'Shield Active', color: 'text-white', highlight: false },
                 ].map((stat, i) => (
-                  <div key={i} className="bg-[#121216] border border-white/5 p-5 rounded-2xl hover:border-indigo-500/30 transition-all group relative overflow-hidden">
-                    <div className="absolute top-0 right-0 w-20 h-20 bg-indigo-500/5 blur-3xl -mr-10 -mt-10 group-hover:bg-indigo-500/10 transition-all"></div>
+                  <motion.div 
+                    key={i} 
+                    variants={staggerItem}
+                    whileHover={{ y: -6, scale: 1.03, transition: { type: 'spring', stiffness: 400 } }}
+                    whileTap={{ scale: 0.98 }}
+                    className="bg-[#121216] border border-white/5 p-5 rounded-2xl hover:border-indigo-500/30 transition-colors group relative overflow-hidden cursor-pointer"
+                  >
+                    <div className="absolute top-0 right-0 w-20 h-20 bg-indigo-500/5 blur-3xl -mr-10 -mt-10 group-hover:bg-indigo-500/10 transition-all duration-500"></div>
                     <div className="flex justify-between items-start mb-4">
-                      <div className="p-2 bg-white/5 rounded-xl group-hover:scale-110 transition-transform">
+                      <motion.div 
+                        className="p-2 bg-white/5 rounded-xl"
+                        whileHover={{ scale: 1.2, rotate: 5 }}
+                        transition={{ type: 'spring', stiffness: 400 }}
+                      >
                         <stat.icon size={16} className="text-indigo-500" />
-                      </div>
+                      </motion.div>
                       <span className={`text-[8px] font-black px-2 py-1 rounded-lg ${stat.highlight ? 'bg-emerald-500/10 text-emerald-500' : 'bg-white/5 text-slate-500'} uppercase tracking-widest`}>
                         {stat.trend}
                       </span>
                     </div>
-                    <div className={`text-xl font-black mb-1 ${stat.color}`}>{stat.value}</div>
+                    <motion.div 
+                      className={`text-xl font-black mb-1 ${stat.color}`}
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      transition={{ delay: 0.2 + i * 0.05 }}
+                    >
+                      {stat.value}
+                    </motion.div>
                     <div className="text-[9px] text-slate-500 font-bold uppercase tracking-widest">{stat.label}</div>
-                  </div>
+                  </motion.div>
                 ))}
-              </div>
+              </motion.div>
 
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                 <div className="lg:col-span-2 space-y-6">
@@ -1791,11 +2273,19 @@ const App: React.FC = () => {
                   )}
                 </div>
               </div>
-            </div>
+            </motion.div>
           )}
 
           {activeTab === 'transactions' && (
-            <div className="space-y-6 animate-in fade-in duration-500">
+            <motion.div 
+              key="transactions"
+              initial="initial"
+              animate="animate"
+              exit="exit"
+              variants={pageTransition}
+              transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+              className="space-y-6"
+            >
               <div className="flex justify-between items-center">
                 <div>
                   <h2 className="text-2xl font-black text-white">Expenditure Ledger</h2>
@@ -2222,12 +2712,20 @@ const App: React.FC = () => {
                   </tbody>
                 </table>
               </div>
-            </div>
+            </motion.div>
           )}
 
           {/* RECEIPT VAULT - Receipts from adw-receipts app */}
           {activeTab === 'receipts' && (
-            <div className="space-y-6 animate-in fade-in duration-500">
+            <motion.div 
+              key="receipts"
+              initial="initial"
+              animate="animate"
+              exit="exit"
+              variants={pageTransition}
+              transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+              className="space-y-6"
+            >
               <div className="flex justify-between items-center">
                 <div>
                   <h2 className="text-2xl font-black text-white">Receipt Vault</h2>
@@ -2380,7 +2878,7 @@ const App: React.FC = () => {
                   )}
                 </>
               )}
-            </div>
+            </motion.div>
           )}
 
           {/* Modal: Link Receipt to Transaction */}
@@ -2448,7 +2946,15 @@ const App: React.FC = () => {
           )}
 
           {activeTab === 'agreements' && (
-            <div className="space-y-6 animate-in fade-in duration-500">
+            <motion.div 
+              key="agreements"
+              initial="initial"
+              animate="animate"
+              exit="exit"
+              variants={pageTransition}
+              transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+              className="space-y-6"
+            >
               <div className="flex justify-between items-center">
                 <div>
                   <h2 className="text-2xl font-black text-white">Service Agreements</h2>
@@ -2536,11 +3042,19 @@ const App: React.FC = () => {
                   <p className="text-sm">No agreements yet. Add your first client contract.</p>
                 </div>
               )}
-            </div>
+            </motion.div>
           )}
 
           {activeTab === 'invoices' && (
-            <div className="space-y-6 animate-in fade-in duration-500">
+            <motion.div 
+              key="invoices"
+              initial="initial"
+              animate="animate"
+              exit="exit"
+              variants={pageTransition}
+              transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+              className="space-y-6"
+            >
               <div className="flex justify-between items-center">
                 <div>
                   <h2 className="text-2xl font-black text-white">Revenue Log</h2>
@@ -2644,11 +3158,19 @@ const App: React.FC = () => {
                   <p className="text-sm">No invoices yet. Create your first invoice.</p>
                 </div>
               )}
-            </div>
+            </motion.div>
           )}
 
           {activeTab === 'tax' && (
-            <div className="space-y-6 animate-in fade-in duration-500">
+            <motion.div 
+              key="tax"
+              initial="initial"
+              animate="animate"
+              exit="exit"
+              variants={pageTransition}
+              transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+              className="space-y-6"
+            >
               {/* Header */}
               <div className="flex justify-between items-center">
                 <div>
@@ -3086,11 +3608,19 @@ const App: React.FC = () => {
                   </div>
                 </div>
               </div>
-            </div>
+            </motion.div>
           )}
 
           {activeTab === 'assets' && (
-            <div className="space-y-6 animate-in fade-in duration-500">
+            <motion.div 
+              key="assets"
+              initial="initial"
+              animate="animate"
+              exit="exit"
+              variants={pageTransition}
+              transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+              className="space-y-6"
+            >
               <div className="flex justify-between items-center">
                 <div>
                   <h2 className="text-2xl font-black text-white">Asset Vault</h2>
@@ -3203,58 +3733,973 @@ const App: React.FC = () => {
                   <p className="text-sm">No assets yet. Upload your first file.</p>
                 </div>
               )}
-            </div>
+            </motion.div>
           )}
 
-          {activeTab === 'chat' && (
-            <div className="h-[calc(100vh-12rem)] flex flex-col animate-in fade-in duration-500">
-              <div className="flex-1 overflow-y-auto custom-scrollbar space-y-6 pb-4">
-                {chatMessages.map(msg => (
-                  <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                    <div className={`max-w-[80%] p-6 rounded-3xl ${
-                      msg.role === 'user' 
-                        ? 'bg-indigo-600 text-white' 
-                        : 'bg-[#121216] border border-white/5 text-slate-300'
-                    }`}>
-                      <p className="text-sm leading-relaxed whitespace-pre-wrap">{msg.content}</p>
+          {activeTab === 'bills' && (
+            <motion.div 
+              key="bills"
+              initial="initial"
+              animate="animate"
+              exit="exit"
+              variants={pageTransition}
+              transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+              className="space-y-6"
+            >
+              {/* Bills Header */}
+              <div className="flex justify-between items-center">
+                <div>
+                  <h1 className="text-2xl font-black text-white">Bills & Utilities</h1>
+                  <p className="text-sm text-slate-500 mt-1">Track household expenses paid with company card</p>
+                </div>
+                <button 
+                  onClick={() => { setEditingBill(null); setShowAddBillModal(true); }}
+                  className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2.5 rounded-xl text-sm font-bold transition-all"
+                >
+                  <Plus size={16} /> Add Bill
+                </button>
+              </div>
+
+              {/* Bills Summary Cards */}
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                {/* Total Monthly */}
+                <div className="bg-[#0c0c0f] border border-white/5 rounded-2xl p-5">
+                  <div className="flex items-center gap-2 mb-3">
+                    <div className="p-2 rounded-xl bg-indigo-500/10">
+                      <DollarSign size={16} className="text-indigo-400" />
+                    </div>
+                    <span className="text-xs font-bold text-slate-500 uppercase">Total Monthly</span>
+                  </div>
+                  <div className="text-2xl font-black text-white">
+                    ${bills.filter(b => b.frequency === 'monthly').reduce((sum, b) => sum + b.amount, 0).toLocaleString()}
+                  </div>
+                  <p className="text-[10px] text-slate-500 mt-1">{bills.filter(b => b.frequency === 'monthly').length} recurring bills</p>
+                </div>
+
+                {/* Upcoming */}
+                <div className="bg-[#0c0c0f] border border-white/5 rounded-2xl p-5">
+                  <div className="flex items-center gap-2 mb-3">
+                    <div className="p-2 rounded-xl bg-amber-500/10">
+                      <Clock size={16} className="text-amber-400" />
+                    </div>
+                    <span className="text-xs font-bold text-slate-500 uppercase">Due Soon</span>
+                  </div>
+                  <div className="text-2xl font-black text-white">
+                    {bills.filter(b => !b.isPaid && new Date(b.dueDate) <= new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)).length}
+                  </div>
+                  <p className="text-[10px] text-slate-500 mt-1">Due in next 7 days</p>
+                </div>
+
+                {/* Paid This Month */}
+                <div className="bg-[#0c0c0f] border border-white/5 rounded-2xl p-5">
+                  <div className="flex items-center gap-2 mb-3">
+                    <div className="p-2 rounded-xl bg-emerald-500/10">
+                      <CheckCircle2 size={16} className="text-emerald-400" />
+                    </div>
+                    <span className="text-xs font-bold text-slate-500 uppercase">Paid</span>
+                  </div>
+                  <div className="text-2xl font-black text-white">
+                    ${bills.filter(b => b.isPaid).reduce((sum, b) => sum + b.amount, 0).toLocaleString()}
+                  </div>
+                  <p className="text-[10px] text-slate-500 mt-1">{bills.filter(b => b.isPaid).length} bills paid</p>
+                </div>
+
+                {/* Overdue */}
+                <div className="bg-[#0c0c0f] border border-white/5 rounded-2xl p-5">
+                  <div className="flex items-center gap-2 mb-3">
+                    <div className="p-2 rounded-xl bg-rose-500/10">
+                      <AlertTriangle size={16} className="text-rose-400" />
+                    </div>
+                    <span className="text-xs font-bold text-slate-500 uppercase">Overdue</span>
+                  </div>
+                  <div className="text-2xl font-black text-white">
+                    {bills.filter(b => !b.isPaid && new Date(b.dueDate) < new Date()).length}
+                  </div>
+                  <p className="text-[10px] text-rose-400 mt-1">
+                    ${bills.filter(b => !b.isPaid && new Date(b.dueDate) < new Date()).reduce((sum, b) => sum + b.amount, 0).toLocaleString()} overdue
+                  </p>
+                </div>
+              </div>
+
+              {/* Bills List */}
+              <div className="bg-[#0c0c0f] border border-white/5 rounded-2xl overflow-hidden">
+                <div className="p-4 border-b border-white/5">
+                  <h3 className="font-bold text-white">All Bills</h3>
+                </div>
+                <div className="divide-y divide-white/5">
+                  {bills.length === 0 ? (
+                    <div className="p-12 text-center">
+                      <Home size={40} className="mx-auto text-slate-600 mb-4" />
+                      <h3 className="text-lg font-bold text-slate-400 mb-2">No Bills Yet</h3>
+                      <p className="text-sm text-slate-500 mb-4">Add your rent, utilities, and other recurring bills</p>
+                      <button 
+                        onClick={() => { setEditingBill(null); setShowAddBillModal(true); }}
+                        className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-xl text-sm font-bold transition-all"
+                      >
+                        <Plus size={14} className="inline mr-2" /> Add Your First Bill
+                      </button>
+                    </div>
+                  ) : (
+                    (billsWithTransactions.length > 0 ? billsWithTransactions : bills.map(b => ({ ...b, matchedTransactions: [], totalPaidAmount: 0, paymentHistory: [] }))).map((bill) => {
+                      const isOverdue = !bill.isPaid && new Date(bill.dueDate) < new Date();
+                      const isDueSoon = !bill.isPaid && !isOverdue && new Date(bill.dueDate) <= new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+                      const matchedTxns = 'matchedTransactions' in bill ? bill.matchedTransactions : [];
+                      const hasMatches = matchedTxns.length > 0;
+                      const isExpanded = expandedBillId === bill.id;
+                      
+                      const categoryIcons: Record<BillCategory, React.ReactNode> = {
+                        rent: <Building2 size={18} />,
+                        electricity: <Zap size={18} />,
+                        gas: <Flame size={18} />,
+                        water: <Droplets size={18} />,
+                        trash: <Trash2 size={18} />,
+                        internet: <Wifi size={18} />,
+                        phone: <Activity size={18} />,
+                        insurance: <ShieldCheck size={18} />,
+                        other: <FileText size={18} />
+                      };
+                      
+                      const categoryColors: Record<BillCategory, string> = {
+                        rent: 'indigo',
+                        electricity: 'amber',
+                        gas: 'orange',
+                        water: 'cyan',
+                        trash: 'slate',
+                        internet: 'violet',
+                        phone: 'emerald',
+                        insurance: 'rose',
+                        other: 'gray'
+                      };
+                      
+                      const color = categoryColors[bill.category];
+                      
+                      return (
+                        <div 
+                          key={bill.id} 
+                          className={`transition-colors ${isOverdue ? 'bg-rose-500/5' : ''}`}
+                        >
+                          <div 
+                            className="p-4 hover:bg-white/[0.02] cursor-pointer"
+                            onClick={() => setExpandedBillId(isExpanded ? null : bill.id)}
+                          >
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-4">
+                                <div className={`p-3 rounded-xl bg-${color}-500/10 text-${color}-400`}>
+                                  {categoryIcons[bill.category]}
+                                </div>
+                                <div>
+                                  <div className="flex items-center gap-2">
+                                    <span className="font-bold text-white">{bill.provider}</span>
+                                    <span className={`text-[9px] px-2 py-0.5 rounded-full font-bold uppercase ${
+                                      bill.isPaid ? 'bg-emerald-500/10 text-emerald-400' :
+                                      isOverdue ? 'bg-rose-500/10 text-rose-400' :
+                                      isDueSoon ? 'bg-amber-500/10 text-amber-400' :
+                                      'bg-slate-500/10 text-slate-400'
+                                    }`}>
+                                      {bill.isPaid ? 'Paid' : isOverdue ? 'Overdue' : isDueSoon ? 'Due Soon' : 'Upcoming'}
+                                    </span>
+                                    {hasMatches && (
+                                      <span className="text-[9px] px-2 py-0.5 rounded-full font-bold uppercase bg-indigo-500/10 text-indigo-400 flex items-center gap-1">
+                                        <Link2 size={8} /> {matchedTxns.length} Mercury Txns
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="flex items-center gap-3 mt-1">
+                                    <span className="text-xs text-slate-500 capitalize">{bill.category}</span>
+                                    <span className="text-xs text-slate-600">•</span>
+                                    <span className="text-xs text-slate-500">{bill.frequency}</span>
+                                    <span className="text-xs text-slate-600">•</span>
+                                    <span className={`text-xs ${isOverdue ? 'text-rose-400' : 'text-slate-500'}`}>
+                                      Due: {new Date(bill.dueDate).toLocaleDateString()}
+                                    </span>
+                                    {hasMatches && (
+                                      <>
+                                        <span className="text-xs text-slate-600">•</span>
+                                        <span className="text-xs text-emerald-400">
+                                          ${('totalPaidAmount' in bill ? bill.totalPaidAmount : 0).toLocaleString()} paid (Mercury)
+                                        </span>
+                                      </>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-4">
+                                <div className="text-right">
+                                  <div className="text-xl font-black text-white">${bill.amount.toLocaleString()}</div>
+                                  {bill.isPaid && bill.paidDate && (
+                                    <div className="text-[10px] text-emerald-400">
+                                      Paid {new Date(bill.paidDate).toLocaleDateString()}
+                                    </div>
+                                  )}
+                                </div>
+                                <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                                  {!bill.isPaid && (
+                                    <button
+                                      onClick={async () => {
+                                        await billsService.markBillAsPaid(bill.id);
+                                        const updatedBills = await billsService.getAllBills();
+                                        setBills(updatedBills);
+                                        setNotification({ message: `${bill.provider} marked as paid!`, type: 'success' });
+                                      }}
+                                      className="p-2 hover:bg-emerald-500/10 rounded-lg text-slate-500 hover:text-emerald-400 transition-colors"
+                                      title="Mark as Paid"
+                                    >
+                                      <Check size={16} />
+                                    </button>
+                                  )}
+                                  <button
+                                    onClick={() => { setEditingBill(bill); setShowAddBillModal(true); }}
+                                    className="p-2 hover:bg-white/5 rounded-lg text-slate-500 hover:text-white transition-colors"
+                                    title="Edit"
+                                  >
+                                    <Edit3 size={16} />
+                                  </button>
+                                  <button
+                                    onClick={async () => {
+                                      if (confirm(`Delete ${bill.provider} bill?`)) {
+                                        await billsService.deleteBill(bill.id);
+                                        const updatedBills = await billsService.getAllBills();
+                                        setBills(updatedBills);
+                                        setNotification({ message: 'Bill deleted', type: 'success' });
+                                      }
+                                    }}
+                                    className="p-2 hover:bg-rose-500/10 rounded-lg text-slate-500 hover:text-rose-400 transition-colors"
+                                    title="Delete"
+                                  >
+                                    <Trash2 size={16} />
+                                  </button>
+                                  <ChevronDown 
+                                    size={16} 
+                                    className={`text-slate-500 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
+                                  />
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                          
+                          {/* Expanded section with matched transactions */}
+                          <AnimatePresence>
+                            {isExpanded && (
+                              <motion.div
+                                initial={{ height: 0, opacity: 0 }}
+                                animate={{ height: 'auto', opacity: 1 }}
+                                exit={{ height: 0, opacity: 0 }}
+                                transition={{ duration: 0.2 }}
+                                className="overflow-hidden"
+                              >
+                                <div className="px-4 pb-4 pt-0">
+                                  <div className="ml-14 space-y-3">
+                                    {/* Notes */}
+                                    {bill.notes && (
+                                      <div className="flex items-center gap-3 p-3 bg-white/[0.02] rounded-xl border border-white/5">
+                                        <Info size={14} className="text-slate-500" />
+                                        <span className="text-xs text-slate-400">{bill.notes.split('\n')[0]}</span>
+                                        {bill.notes.includes('Account: http') && (
+                                          <a 
+                                            href={bill.notes.match(/Account: (https?:\/\/[^\s]+)/)?.[1]} 
+                                            target="_blank" 
+                                            rel="noopener noreferrer"
+                                            className="flex items-center gap-1 text-[10px] px-2 py-1 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 rounded-lg transition-colors ml-auto"
+                                          >
+                                            <ExternalLink size={10} /> Pay Online
+                                          </a>
+                                        )}
+                                      </div>
+                                    )}
+                                    
+                                    {/* Matched Mercury Transactions */}
+                                    <div className="p-3 bg-white/[0.02] rounded-xl border border-white/5">
+                                      <div className="flex items-center justify-between mb-3">
+                                        <div className="flex items-center gap-2">
+                                          <Waves size={14} className="text-indigo-400" />
+                                          <span className="text-xs font-bold text-white">Mercury Payments</span>
+                                        </div>
+                                        {hasMatches && (
+                                          <span className="text-[10px] text-emerald-400 font-bold">
+                                            ${('totalPaidAmount' in bill ? bill.totalPaidAmount : 0).toLocaleString()} total
+                                          </span>
+                                        )}
+                                      </div>
+                                      
+                                      {matchedTxns.length === 0 ? (
+                                        <div className="text-center py-4">
+                                          <p className="text-xs text-slate-500">No matching transactions found in Mercury</p>
+                                          <p className="text-[10px] text-slate-600 mt-1">
+                                            Transactions with "{bill.provider.split(' ')[0]}" or related keywords will appear here
+                                          </p>
+                                        </div>
+                                      ) : (
+                                        <div className="space-y-2 max-h-60 overflow-y-auto custom-scrollbar">
+                                          {matchedTxns.slice(0, 10).map((txn, idx) => (
+                                            <div 
+                                              key={txn.id || idx}
+                                              className="flex items-center justify-between p-2 bg-white/[0.02] rounded-lg hover:bg-white/[0.04] transition-colors"
+                                            >
+                                              <div className="flex items-center gap-3">
+                                                <div className="w-8 h-8 rounded-lg bg-emerald-500/10 flex items-center justify-center">
+                                                  <CheckCircle2 size={12} className="text-emerald-400" />
+                                                </div>
+                                                <div>
+                                                  <div className="text-xs font-medium text-white">{txn.vendor}</div>
+                                                  <div className="text-[10px] text-slate-500">{txn.date}</div>
+                                                </div>
+                                              </div>
+                                              <div className="text-right">
+                                                <div className="text-sm font-bold text-white">${txn.amount.toLocaleString()}</div>
+                                                <div className="text-[9px] text-slate-500">{txn.category}</div>
+                                              </div>
+                                            </div>
+                                          ))}
+                                          {matchedTxns.length > 10 && (
+                                            <div className="text-center text-[10px] text-slate-500 pt-2">
+                                              + {matchedTxns.length - 10} more transactions
+                                            </div>
+                                          )}
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+                              </motion.div>
+                            )}
+                          </AnimatePresence>
+                          
+                          {/* Notes preview when not expanded */}
+                          {!isExpanded && bill.notes && (
+                            <div className="mt-2 pl-16 flex items-center gap-3">
+                              <span className="text-xs text-slate-500">
+                                {bill.notes.split('\n')[0]}
+                              </span>
+                              {bill.notes.includes('Account: http') && (
+                                <a 
+                                  href={bill.notes.match(/Account: (https?:\/\/[^\s]+)/)?.[1]} 
+                                  target="_blank" 
+                                  rel="noopener noreferrer"
+                                  className="flex items-center gap-1 text-[10px] px-2 py-1 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 rounded-lg transition-colors"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  <ExternalLink size={10} /> Pay Online
+                                </a>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+
+              {/* Quick Add Presets */}
+              <div className="bg-[#0c0c0f] border border-white/5 rounded-2xl p-5">
+                <h3 className="font-bold text-white mb-4">Quick Add Common Bills</h3>
+                <div className="flex flex-wrap gap-2">
+                  {[
+                    { category: 'electricity' as BillCategory, provider: 'Electric Company', icon: <Zap size={14} /> },
+                    { category: 'gas' as BillCategory, provider: 'Gas Company', icon: <Flame size={14} /> },
+                    { category: 'water' as BillCategory, provider: 'Water Utility', icon: <Droplets size={14} /> },
+                    { category: 'trash' as BillCategory, provider: 'Waste Management', icon: <Trash2 size={14} /> },
+                    { category: 'internet' as BillCategory, provider: 'Internet Provider', icon: <Wifi size={14} /> },
+                  ].map((preset) => (
+                    <button
+                      key={preset.category}
+                      onClick={() => {
+                        setEditingBill({
+                          id: '',
+                          category: preset.category,
+                          provider: preset.provider,
+                          amount: 0,
+                          dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+                          frequency: 'monthly',
+                          status: 'pending',
+                          isPaid: false,
+                          autoPayEnabled: false,
+                          reminderDays: 5,
+                          createdAt: '',
+                          updatedAt: ''
+                        });
+                        setShowAddBillModal(true);
+                      }}
+                      className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 rounded-xl text-sm text-slate-300 transition-all"
+                    >
+                      {preset.icon}
+                      <span>+ {preset.provider}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Utility Account Credentials */}
+              <div className="bg-[#0c0c0f] border border-white/5 rounded-2xl overflow-hidden">
+                <button 
+                  onClick={() => setShowCredentials(!showCredentials)}
+                  className="w-full p-4 flex items-center justify-between hover:bg-white/[0.02] transition-colors"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 rounded-xl bg-amber-500/10">
+                      <Lock size={16} className="text-amber-400" />
+                    </div>
+                    <div className="text-left">
+                      <h3 className="font-bold text-white">Utility Account Logins</h3>
+                      <p className="text-xs text-slate-500">{credentials.length} saved accounts • Click to {showCredentials ? 'hide' : 'reveal'}</p>
                     </div>
                   </div>
-                ))}
-                {isTyping && (
-                  <div className="flex justify-start">
-                    <div className="bg-[#121216] border border-white/5 p-6 rounded-3xl">
-                      <div className="flex gap-1">
-                        <div className="w-2 h-2 bg-indigo-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
-                        <div className="w-2 h-2 bg-indigo-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
-                        <div className="w-2 h-2 bg-indigo-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
+                  <ChevronDown size={18} className={`text-slate-500 transition-transform ${showCredentials ? 'rotate-180' : ''}`} />
+                </button>
+                
+                <AnimatePresence>
+                  {showCredentials && (
+                    <motion.div
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: 'auto', opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      transition={{ duration: 0.2 }}
+                      className="overflow-hidden"
+                    >
+                      <div className="p-4 pt-0 space-y-3">
+                        <div className="flex items-center gap-2 p-3 bg-amber-500/5 border border-amber-500/20 rounded-xl">
+                          <ShieldAlert size={14} className="text-amber-400" />
+                          <span className="text-xs text-amber-400">Keep these credentials secure. Don't share your screen while viewing.</span>
+                        </div>
+                        
+                        {credentials.length === 0 ? (
+                          <div className="text-center py-6 text-slate-500 text-sm">
+                            No credentials saved yet
+                          </div>
+                        ) : (
+                          <div className="space-y-2">
+                            {credentials.map((cred) => (
+                              <div key={cred.id} className="p-4 bg-white/[0.02] border border-white/5 rounded-xl">
+                                <div className="flex items-start justify-between gap-4">
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-2 mb-2">
+                                      <span className="font-bold text-white">{cred.service_name}</span>
+                                      <a 
+                                        href={cred.service_url} 
+                                        target="_blank" 
+                                        rel="noopener noreferrer"
+                                        className="p-1 hover:bg-white/5 rounded text-slate-500 hover:text-indigo-400 transition-colors"
+                                      >
+                                        <ExternalLink size={12} />
+                                      </a>
+                                    </div>
+                                    <div className="space-y-1.5">
+                                      <div className="flex items-center gap-2">
+                                        <span className="text-[10px] text-slate-500 uppercase w-16">Email:</span>
+                                        <code className="text-xs text-slate-300 bg-white/5 px-2 py-0.5 rounded">{cred.username}</code>
+                                        <button
+                                          onClick={() => {
+                                            navigator.clipboard.writeText(cred.username);
+                                            setNotification({ message: 'Email copied!', type: 'success' });
+                                          }}
+                                          className="p-1 hover:bg-white/5 rounded text-slate-500 hover:text-white transition-colors"
+                                          title="Copy"
+                                        >
+                                          <FileText size={10} />
+                                        </button>
+                                      </div>
+                                      <div className="flex items-center gap-2">
+                                        <span className="text-[10px] text-slate-500 uppercase w-16">Password:</span>
+                                        <code className="text-xs text-slate-300 bg-white/5 px-2 py-0.5 rounded font-mono">
+                                          {revealedPasswords.has(cred.id) ? cred.password : '••••••••••••'}
+                                        </code>
+                                        <button
+                                          onClick={() => {
+                                            const newRevealed = new Set(revealedPasswords);
+                                            if (newRevealed.has(cred.id)) {
+                                              newRevealed.delete(cred.id);
+                                            } else {
+                                              newRevealed.add(cred.id);
+                                            }
+                                            setRevealedPasswords(newRevealed);
+                                          }}
+                                          className="p-1 hover:bg-white/5 rounded text-slate-500 hover:text-white transition-colors"
+                                          title={revealedPasswords.has(cred.id) ? 'Hide' : 'Show'}
+                                        >
+                                          <Eye size={10} />
+                                        </button>
+                                        <button
+                                          onClick={() => {
+                                            navigator.clipboard.writeText(cred.password);
+                                            setNotification({ message: 'Password copied!', type: 'success' });
+                                          }}
+                                          className="p-1 hover:bg-white/5 rounded text-slate-500 hover:text-white transition-colors"
+                                          title="Copy"
+                                        >
+                                          <FileText size={10} />
+                                        </button>
+                                      </div>
+                                    </div>
+                                    {cred.notes && (
+                                      <p className="text-[10px] text-slate-500 mt-2">{cred.notes}</p>
+                                    )}
+                                  </div>
+                                  <a
+                                    href={cred.service_url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="px-3 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-lg transition-colors flex items-center gap-1"
+                                  >
+                                    Login <ExternalLink size={10} />
+                                  </a>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        
+                        <div className="pt-2 text-[9px] text-slate-600 text-center">
+                          Credentials stored in Supabase • Synced across devices
+                        </div>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+            </motion.div>
+          )}
+
+          {/* Add/Edit Bill Modal */}
+          <AnimatePresence>
+            {showAddBillModal && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+                onClick={() => setShowAddBillModal(false)}
+              >
+                <motion.div
+                  initial={{ scale: 0.9, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  exit={{ scale: 0.9, opacity: 0 }}
+                  onClick={(e) => e.stopPropagation()}
+                  className="bg-[#0c0c0f] border border-white/10 rounded-2xl w-full max-w-md overflow-hidden"
+                >
+                  <div className="p-5 border-b border-white/5 flex items-center justify-between">
+                    <h2 className="text-lg font-bold text-white">
+                      {editingBill?.id ? 'Edit Bill' : 'Add New Bill'}
+                    </h2>
+                    <button 
+                      onClick={() => setShowAddBillModal(false)}
+                      className="p-2 hover:bg-white/5 rounded-xl text-slate-500 hover:text-white transition-colors"
+                    >
+                      <X size={18} />
+                    </button>
+                  </div>
+                  <form 
+                    onSubmit={async (e) => {
+                      e.preventDefault();
+                      const formData = new FormData(e.currentTarget);
+                      const billData = {
+                        category: formData.get('category') as BillCategory,
+                        provider: formData.get('provider') as string,
+                        amount: parseFloat(formData.get('amount') as string) || 0,
+                        dueDate: formData.get('dueDate') as string,
+                        frequency: formData.get('frequency') as 'monthly' | 'quarterly' | 'annually' | 'one-time',
+                        isPaid: formData.get('isPaid') === 'on',
+                        autoPayEnabled: formData.get('autoPayEnabled') === 'on',
+                        reminderDays: parseInt(formData.get('reminderDays') as string) || 5,
+                        notes: formData.get('notes') as string,
+                        accountNumber: formData.get('accountNumber') as string
+                      };
+                      
+                      if (editingBill?.id) {
+                        await billsService.updateBill(editingBill.id, billData);
+                        setNotification({ message: 'Bill updated!', type: 'success' });
+                      } else {
+                        await billsService.createBill(billData);
+                        setNotification({ message: 'Bill added!', type: 'success' });
+                      }
+                      
+                      const updatedBills = await billsService.getAllBills();
+                      setBills(updatedBills);
+                      setShowAddBillModal(false);
+                      setEditingBill(null);
+                    }}
+                    className="p-5 space-y-4"
+                  >
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-xs font-bold text-slate-500 mb-2">Category</label>
+                        <select 
+                          name="category" 
+                          defaultValue={editingBill?.category || 'rent'}
+                          className="w-full bg-[#121216] border border-white/10 rounded-xl py-3 px-4 text-sm text-white focus:border-indigo-500 outline-none"
+                        >
+                          <option value="rent">🏠 Rent</option>
+                          <option value="electricity">⚡ Electricity</option>
+                          <option value="gas">🔥 Gas</option>
+                          <option value="water">💧 Water</option>
+                          <option value="trash">🗑️ Trash</option>
+                          <option value="internet">📶 Internet</option>
+                          <option value="phone">📱 Phone</option>
+                          <option value="insurance">🛡️ Insurance</option>
+                          <option value="other">📄 Other</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-slate-500 mb-2">Frequency</label>
+                        <select 
+                          name="frequency" 
+                          defaultValue={editingBill?.frequency || 'monthly'}
+                          className="w-full bg-[#121216] border border-white/10 rounded-xl py-3 px-4 text-sm text-white focus:border-indigo-500 outline-none"
+                        >
+                          <option value="monthly">Monthly</option>
+                          <option value="quarterly">Quarterly</option>
+                          <option value="annually">Annually</option>
+                          <option value="one-time">One-time</option>
+                        </select>
                       </div>
                     </div>
-                  </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 mb-2">Provider/Payee</label>
+                      <input 
+                        name="provider"
+                        type="text"
+                        defaultValue={editingBill?.provider || ''}
+                        placeholder="e.g., PG&E, Landlord, Comcast"
+                        className="w-full bg-[#121216] border border-white/10 rounded-xl py-3 px-4 text-sm text-white placeholder:text-slate-600 focus:border-indigo-500 outline-none"
+                        required
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-xs font-bold text-slate-500 mb-2">Amount</label>
+                        <div className="relative">
+                          <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500">$</span>
+                          <input 
+                            name="amount"
+                            type="number"
+                            step="0.01"
+                            defaultValue={editingBill?.amount || ''}
+                            placeholder="0.00"
+                            className="w-full bg-[#121216] border border-white/10 rounded-xl py-3 pl-8 pr-4 text-sm text-white placeholder:text-slate-600 focus:border-indigo-500 outline-none"
+                            required
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-slate-500 mb-2">Due Date</label>
+                        <input 
+                          name="dueDate"
+                          type="date"
+                          defaultValue={editingBill?.dueDate || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]}
+                          className="w-full bg-[#121216] border border-white/10 rounded-xl py-3 px-4 text-sm text-white focus:border-indigo-500 outline-none"
+                          required
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 mb-2">Account Number (Optional)</label>
+                      <input 
+                        name="accountNumber"
+                        type="text"
+                        defaultValue={editingBill?.accountNumber || ''}
+                        placeholder="For your reference"
+                        className="w-full bg-[#121216] border border-white/10 rounded-xl py-3 px-4 text-sm text-white placeholder:text-slate-600 focus:border-indigo-500 outline-none"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 mb-2">Notes (Optional)</label>
+                      <textarea 
+                        name="notes"
+                        defaultValue={editingBill?.notes || ''}
+                        placeholder="Any notes about this bill..."
+                        rows={2}
+                        className="w-full bg-[#121216] border border-white/10 rounded-xl py-3 px-4 text-sm text-white placeholder:text-slate-600 focus:border-indigo-500 outline-none resize-none"
+                      />
+                    </div>
+
+                    <div className="flex items-center gap-6 pt-2">
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input 
+                          name="autoPayEnabled"
+                          type="checkbox"
+                          defaultChecked={editingBill?.autoPayEnabled || false}
+                          className="w-4 h-4 rounded bg-[#121216] border-white/20 text-indigo-500 focus:ring-indigo-500"
+                        />
+                        <span className="text-sm text-slate-300">Auto-pay enabled</span>
+                      </label>
+                      {editingBill?.id && (
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input 
+                            name="isPaid"
+                            type="checkbox"
+                            defaultChecked={editingBill?.isPaid || false}
+                            className="w-4 h-4 rounded bg-[#121216] border-white/20 text-emerald-500 focus:ring-emerald-500"
+                          />
+                          <span className="text-sm text-slate-300">Mark as paid</span>
+                        </label>
+                      )}
+                    </div>
+
+                    <input type="hidden" name="reminderDays" value="5" />
+
+                    <div className="flex gap-3 pt-4">
+                      <button
+                        type="button"
+                        onClick={() => { setShowAddBillModal(false); setEditingBill(null); }}
+                        className="flex-1 py-3 px-4 bg-white/5 hover:bg-white/10 rounded-xl text-sm font-bold text-slate-300 transition-colors"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="submit"
+                        className="flex-1 py-3 px-4 bg-indigo-600 hover:bg-indigo-500 rounded-xl text-sm font-bold text-white transition-colors"
+                      >
+                        {editingBill?.id ? 'Update Bill' : 'Add Bill'}
+                      </button>
+                    </div>
+                  </form>
+                </motion.div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {activeTab === 'chat' && (
+            <motion.div 
+              key="chat"
+              initial="initial"
+              animate="animate"
+              exit="exit"
+              variants={pageTransition}
+              transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+              className="h-[calc(100vh-12rem)] flex"
+            >
+              {/* Chat History Sidebar */}
+              <AnimatePresence>
+                {showChatHistory && (
+                  <motion.div 
+                    initial={{ width: 0, opacity: 0 }}
+                    animate={{ width: 300, opacity: 1 }}
+                    exit={{ width: 0, opacity: 0 }}
+                    transition={{ type: 'spring', stiffness: 300, damping: 30 }}
+                    className="h-full border-r border-white/5 bg-[#0d0d10] overflow-hidden flex flex-col"
+                  >
+                    <div className="p-4 border-b border-white/5">
+                      <div className="flex items-center justify-between mb-3">
+                        <h3 className="text-sm font-bold text-white">Chat History</h3>
+                        <button 
+                          onClick={() => setShowChatHistory(false)}
+                          className="text-slate-500 hover:text-white transition-colors"
+                        >
+                          <X size={16} />
+                        </button>
+                      </div>
+                      <button 
+                        onClick={handleNewChat}
+                        className="w-full flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white py-2 px-4 rounded-xl text-xs font-bold transition-all"
+                      >
+                        <Plus size={14} />
+                        New Conversation
+                      </button>
+                    </div>
+                    <div className="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-1">
+                      {isLoadingHistory ? (
+                        <div className="flex items-center justify-center py-8">
+                          <Loader2 size={20} className="animate-spin text-indigo-500" />
+                        </div>
+                      ) : chatSessions.length === 0 ? (
+                        <div className="text-center py-8 text-slate-500 text-xs">
+                          No saved conversations yet
+                        </div>
+                      ) : (
+                        chatSessions.map(session => (
+                          <button
+                            key={session.id}
+                            onClick={() => handleLoadSession(session.id)}
+                            className={`w-full text-left p-3 rounded-xl transition-all group ${
+                              session.id === currentSessionId 
+                                ? 'bg-indigo-600/20 border border-indigo-500/30' 
+                                : 'hover:bg-white/5 border border-transparent'
+                            }`}
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="flex-1 min-w-0">
+                                <div className="text-xs font-medium text-white truncate">
+                                  {session.title}
+                                </div>
+                                <div className="text-[10px] text-slate-500 mt-1">
+                                  {new Date(session.updatedAt).toLocaleDateString()} • {session.messages.length} msgs
+                                </div>
+                              </div>
+                              <button
+                                onClick={(e) => handleDeleteSession(session.id, e)}
+                                className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-rose-400 transition-all p-1"
+                              >
+                                <Trash2 size={12} />
+                              </button>
+                            </div>
+                          </button>
+                        ))
+                      )}
+                    </div>
+                    <div className="p-3 border-t border-white/5 text-[9px] text-slate-600 text-center">
+                      Conversations auto-saved locally & synced to cloud
+                    </div>
+                  </motion.div>
                 )}
-                <div ref={chatEndRef} />
+              </AnimatePresence>
+              
+              {/* Main Chat Area */}
+              <div className="flex-1 flex flex-col">
+                {/* Chat Header */}
+                <div className="flex items-center justify-between p-4 border-b border-white/5">
+                  <div className="flex items-center gap-3">
+                    <button 
+                      onClick={() => setShowChatHistory(!showChatHistory)}
+                      className={`p-2 rounded-xl transition-all ${showChatHistory ? 'bg-indigo-600/20 text-indigo-400' : 'hover:bg-white/5 text-slate-500'}`}
+                      title="Chat History"
+                    >
+                      <History size={18} />
+                    </button>
+                    <div>
+                      <h2 className="text-sm font-bold text-white">AI War Room</h2>
+                      <p className="text-[10px] text-slate-500">RAG-powered • IRC Knowledge Base • Your Financial Data</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1 px-2 py-1 bg-emerald-500/10 rounded-lg">
+                      <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse"></div>
+                      <span className="text-[9px] text-emerald-400 font-bold uppercase">Connected</span>
+                    </div>
+                    <button 
+                      onClick={handleNewChat}
+                      className="p-2 hover:bg-white/5 rounded-xl text-slate-500 hover:text-white transition-colors"
+                      title="New Chat"
+                    >
+                      <Plus size={18} />
+                    </button>
+                  </div>
+                </div>
+                
+                {/* Messages */}
+                <div className="flex-1 overflow-y-auto custom-scrollbar space-y-4 p-4">
+                  {chatMessages.map((msg, idx) => (
+                    <motion.div 
+                      key={msg.id} 
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: idx * 0.05 }}
+                      className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                    >
+                      <div className={`max-w-[80%] p-5 rounded-2xl ${
+                        msg.role === 'user' 
+                          ? 'bg-indigo-600 text-white' 
+                          : 'bg-[#121216] border border-white/5 text-slate-300'
+                      }`}>
+                        {msg.role === 'assistant' && (
+                          <div className="flex items-center gap-2 mb-2 pb-2 border-b border-white/5">
+                            <div className="p-1 bg-indigo-500/20 rounded-lg">
+                              <Brain size={12} className="text-indigo-400" />
+                            </div>
+                            <span className="text-[9px] text-indigo-400 font-bold uppercase">Tax Strategist</span>
+                          </div>
+                        )}
+                        <p className="text-sm leading-relaxed whitespace-pre-wrap">{msg.content}</p>
+                        <div className="mt-2 text-[9px] text-slate-500">
+                          {new Date(msg.timestamp).toLocaleTimeString()}
+                        </div>
+                      </div>
+                    </motion.div>
+                  ))}
+                  {isTyping && (
+                    <motion.div 
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      className="flex justify-start"
+                    >
+                      <div className="bg-[#121216] border border-white/5 p-5 rounded-2xl">
+                        <div className="flex items-center gap-2 mb-2">
+                          <div className="p-1 bg-indigo-500/20 rounded-lg">
+                            <Brain size={12} className="text-indigo-400" />
+                          </div>
+                          <span className="text-[9px] text-indigo-400 font-bold uppercase">Analyzing...</span>
+                        </div>
+                        <div className="flex gap-1.5">
+                          <div className="w-2 h-2 bg-indigo-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
+                          <div className="w-2 h-2 bg-indigo-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
+                          <div className="w-2 h-2 bg-indigo-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
+                        </div>
+                      </div>
+                    </motion.div>
+                  )}
+                  <div ref={chatEndRef} />
+                </div>
+                
+                {/* Input */}
+                <form onSubmit={handleSendMessage} className="p-4 border-t border-white/5">
+                  <div className="flex gap-3">
+                    <input 
+                      name="chatInput" 
+                      type="text" 
+                      placeholder="Ask about tax strategy, IRC sections, your finances..." 
+                      className="flex-1 bg-[#121216] border border-white/10 rounded-2xl py-4 px-6 text-sm text-white placeholder:text-slate-600 focus:border-indigo-500 outline-none transition-all"
+                    />
+                    <button 
+                      type="submit" 
+                      disabled={isTyping} 
+                      className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white px-6 rounded-2xl transition-all flex items-center gap-2 font-medium"
+                    >
+                      <Send size={18} />
+                    </button>
+                  </div>
+                  <div className="mt-2 flex items-center justify-center gap-4 text-[9px] text-slate-600">
+                    <span className="flex items-center gap-1">
+                      <BookOpen size={10} /> IRC Knowledge Base
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <Activity size={10} /> Live Financial Data
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <History size={10} /> Chat History Saved
+                    </span>
+                  </div>
+                </form>
               </div>
-              <form onSubmit={handleSendMessage} className="flex gap-4 pt-4 border-t border-white/5">
-                <input 
-                  name="chatInput" 
-                  type="text" 
-                  placeholder="Ask the Tax Strategist..." 
-                  className="flex-1 bg-[#121216] border border-white/10 rounded-2xl py-4 px-6 text-sm text-white placeholder:text-slate-600 focus:border-indigo-500 outline-none transition-all"
-                />
-                <button type="submit" disabled={isTyping} className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white p-4 rounded-2xl transition-all">
-                  <Send size={20} />
-                </button>
-              </form>
-            </div>
+            </motion.div>
           )}
+          </AnimatePresence>
         </div>
       </main>
 
       {/* Settings Modal */}
+      <AnimatePresence>
       {showModal === 'settings' && (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/90 backdrop-blur-md" onClick={() => setShowModal(null)} />
-          <div className="bg-[#121216] border border-white/10 w-full max-w-lg rounded-[2.5rem] p-10 relative z-10 shadow-2xl max-h-[90vh] overflow-y-auto">
-            <button onClick={() => setShowModal(null)} className="absolute top-6 right-6 text-slate-500 hover:text-white"><X size={20} /></button>
+        <motion.div 
+          className="fixed inset-0 z-[200] flex items-center justify-center p-4"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+        >
+          <motion.div 
+            className="absolute inset-0 bg-black/90 backdrop-blur-md" 
+            onClick={() => setShowModal(null)}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+          />
+          <motion.div 
+            className="bg-[#121216] border border-white/10 w-full max-w-lg rounded-[2.5rem] p-10 relative z-10 shadow-2xl max-h-[90vh] overflow-y-auto"
+            initial={{ opacity: 0, scale: 0.9, y: 40 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95, y: 20 }}
+            transition={{ type: 'spring', stiffness: 300, damping: 30 }}
+          >
+            <motion.button 
+              onClick={() => setShowModal(null)} 
+              className="absolute top-6 right-6 text-slate-500 hover:text-white"
+              whileHover={{ scale: 1.1, rotate: 90 }}
+              whileTap={{ scale: 0.9 }}
+              transition={{ type: 'spring', stiffness: 400 }}
+            >
+              <X size={20} />
+            </motion.button>
             
             <div className="flex items-center gap-4 mb-8">
               <div className="p-4 bg-indigo-600 rounded-2xl text-white">
@@ -3327,15 +4772,34 @@ const App: React.FC = () => {
                 </p>
               </div>
             </div>
-          </div>
-        </div>
+          </motion.div>
+        </motion.div>
       )}
+      </AnimatePresence>
 
       {/* Mercury Vault Modal */}
+      <AnimatePresence>
       {showModal === 'mercury' && (
-        <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/90 backdrop-blur-md" onClick={() => setShowModal(null)} />
-          <div className="bg-[#121216] border border-white/10 w-full max-w-md rounded-[2.5rem] p-10 relative z-10 shadow-2xl">
+        <motion.div 
+          className="fixed inset-0 z-[200] flex items-center justify-center p-4"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+        >
+          <motion.div 
+            className="absolute inset-0 bg-black/90 backdrop-blur-md" 
+            onClick={() => setShowModal(null)}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+          />
+          <motion.div 
+            className="bg-[#121216] border border-white/10 w-full max-w-md rounded-[2.5rem] p-10 relative z-10 shadow-2xl"
+            initial={{ opacity: 0, scale: 0.9, y: 40 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95, y: 20 }}
+            transition={{ type: 'spring', stiffness: 300, damping: 30 }}
+          >
             <div className="flex flex-col items-center text-center space-y-6">
               <div className="p-6 bg-indigo-600 rounded-3xl text-white shadow-2xl shadow-indigo-600/30">
                  <Lock size={48} />
@@ -3391,9 +4855,10 @@ const App: React.FC = () => {
                  <button type="submit" className="w-full py-5 bg-indigo-600 hover:bg-indigo-500 text-white font-black uppercase tracking-[0.2em] rounded-2xl transition-all shadow-xl active:scale-95">Establish Connection</button>
               </form>
             </div>
-          </div>
-        </div>
+          </motion.div>
+        </motion.div>
       )}
+      </AnimatePresence>
 
       {/* Agreement Modal */}
       {showModal === 'agreement' && (

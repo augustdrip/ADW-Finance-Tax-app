@@ -52,6 +52,19 @@ interface MercuryCreditCard {
 }
 
 /**
+ * Interface for Mercury's Statement format (normalized)
+ */
+interface MercuryStatement {
+  id: string;
+  startDate?: string;
+  endDate?: string;
+  statementDate?: string;
+  dueDate?: string;
+  endingBalance?: number;
+  downloadUrl?: string;
+}
+
+/**
  * Interface for Mercury's API Transaction format
  */
 interface MercuryTransaction {
@@ -270,6 +283,76 @@ export const mercuryService = {
 
     console.log(`[Mercury] 💳 Total credit card transactions: ${allTransactions.length}`);
     return allTransactions;
+  },
+
+  /**
+   * Fetches credit card statements for the Mercury credit account
+   */
+  async fetchCreditCardStatements(apiKey?: string): Promise<MercuryStatement[]> {
+    const apiKeyStr = typeof apiKey === 'string' ? apiKey : String((apiKey as any) ?? '');
+    const key = apiKeyStr || getMercuryKey();
+    if (!key) {
+      throw new Error("Mercury API Key is required. Paste your token again.");
+    }
+
+    console.log("[Mercury] 📄 Fetching credit card statements...");
+
+    const response = await fetch(`${MERCURY_API_BASE}/credit/statements`, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${key}`,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      }
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      const errMsg = errorData.errors?.[0]?.message || errorData.message || `Mercury API Error: ${response.status}`;
+      throw new Error(errMsg);
+    }
+
+    const data = await response.json();
+    const statements = data.statements || data || [];
+
+    return statements
+      .map((s: any) => ({
+        id: s.id || s.statementId || s.statement_id,
+        startDate: s.startDate || s.start_date || s.periodStart || s.period_start,
+        endDate: s.endDate || s.end_date || s.periodEnd || s.period_end,
+        statementDate: s.statementDate || s.statement_date || s.date,
+        dueDate: s.dueDate || s.paymentDueDate || s.due_date,
+        endingBalance: s.endingBalance || s.ending_balance || s.balance,
+        downloadUrl: s.downloadUrl || s.download_url || s.pdfUrl || s.pdf_url
+      }))
+      .filter((s: MercuryStatement) => Boolean(s.id));
+  },
+
+  /**
+   * Downloads a statement PDF via the proxy
+   */
+  async fetchStatementPdf(statementId: string, apiKey?: string): Promise<Blob> {
+    const apiKeyStr = typeof apiKey === 'string' ? apiKey : String((apiKey as any) ?? '');
+    const key = apiKeyStr || getMercuryKey();
+    if (!key) {
+      throw new Error("Mercury API Key is required. Paste your token again.");
+    }
+
+    const response = await fetch(`${MERCURY_API_BASE}/statements/${statementId}/pdf`, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${key}`,
+        'Accept': 'application/pdf'
+      }
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      const errMsg = errorData.errors?.[0]?.message || errorData.message || `Mercury API Error: ${response.status}`;
+      throw new Error(errMsg);
+    }
+
+    return await response.blob();
   },
 
   /**
@@ -679,33 +762,27 @@ export const mercuryService = {
     
     // Process the /credit endpoint data (most reliable for credit balance)
     if (creditAccount) {
-      console.log("[Mercury] Processing /credit endpoint data...");
+      console.log("[Mercury] Processing /credit endpoint data...", JSON.stringify(creditAccount, null, 2));
       
-      // Mercury /credit endpoint may have various structures
-      const creditData = creditAccount.credit || creditAccount;
+      // Mercury /credit endpoint returns { accounts: [{ id, availableBalance, currentBalance, ... }] }
+      // Extract the first credit account from the accounts array
+      const creditAccounts = creditAccount.accounts || [];
+      const creditData = creditAccounts[0] || creditAccount.credit || creditAccount;
       
-      // Extract credit info - try various possible field names
-      const newCredit = Math.abs(
-        creditData.currentBalance || 
-        creditData.balance || 
-        creditData.outstandingBalance ||
-        creditData.totalBalance ||
-        credit // fallback to what we found before
-      );
+      console.log("[Mercury] 💳 Credit data extracted:", JSON.stringify(creditData, null, 2));
       
-      const newCreditAvailable = Math.abs(
-        creditData.availableCredit || 
-        creditData.availableBalance || 
-        creditData.remainingCredit ||
-        creditAvailable
-      );
+      // Mercury uses NEGATIVE values for credit: currentBalance = -(amount owed), availableBalance = -(available credit)
+      // So we take the absolute value
+      const rawCurrentBalance = creditData.currentBalance ?? 0;
+      const rawAvailableBalance = creditData.availableBalance ?? 0;
       
-      const newCreditLimit = 
-        creditData.creditLimit || 
-        creditData.limit || 
-        creditData.totalCreditLimit ||
-        (newCredit + newCreditAvailable) ||
-        creditLimit;
+      // Extract credit info - Mercury returns negative values, so we use Math.abs
+      const newCredit = Math.abs(rawCurrentBalance);
+      
+      const newCreditAvailable = Math.abs(rawAvailableBalance);
+      
+      // Credit limit = amount owed + available credit
+      const newCreditLimit = newCredit + newCreditAvailable;
       
       const newCreditPending = Math.abs(
         creditData.pendingBalance || 
@@ -713,6 +790,14 @@ export const mercuryService = {
         creditData.pending ||
         creditPending
       );
+      
+      console.log("[Mercury] 💳 Parsed credit values:", {
+        rawCurrentBalance,
+        rawAvailableBalance,
+        newCredit,
+        newCreditAvailable,
+        newCreditLimit
+      });
       
       // Only update if we got meaningful data
       if (newCredit > 0 || newCreditAvailable > 0 || newCreditLimit > 0) {

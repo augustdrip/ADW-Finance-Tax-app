@@ -3,6 +3,7 @@ import { GoogleGenAI, Type } from "@google/genai";
 import { Transaction, TaxAnalysis } from "../types";
 import { 
   IRC_KNOWLEDGE_BASE, 
+  IRCSection,
   formatIRCForAI, 
   findIRCSections, 
   analyzeTransactionIRC,
@@ -82,6 +83,19 @@ ${IRC_QUICK_REFERENCE}
 - QBI Deduction: 20% of qualified business income
 - Self-Employment Tax: 15.3% on 92.35% of net SE income
 - Home Office Simplified: $5/sq ft, max 300 sq ft = $1,500
+
+## EXPENSE & FINANCIAL QUERIES:
+You have access to COMPLETE financial data including ALL expenses, vendors, and transactions. When asked about expenses:
+- ALWAYS use the exact data from the VENDOR QUICK-LOOKUP INDEX provided in context
+- For vendor lookups, match vendor names case-insensitively (e.g., "cursor" matches "Cursor", "CURSOR", "cursor.com")
+- Report: total spend, transaction count, average per transaction, date range
+- For questions like "how much did I spend on X", search the vendor index and provide exact figures
+- If a vendor has multiple name variations (e.g., "cursor.com" vs "cursor"), combine them logically
+- Always include the date range of transactions for context
+- If asked about monthly trends, use the MONTHLY EXPENSE TRENDS section
+
+Example: "How many expenses for Cursor all time?"
+→ Look up vendor index for "cursor", report: count, total, average, first/last date
 
 Current Strategy focus: Maximizing "Agency Shield" protection and optimizing for the 2024-2025 tax years.
 `;
@@ -525,11 +539,360 @@ Be specific and actionable. Focus on cost reduction and revenue growth.`;
   }
 };
 
+// ============================================
+// RAG (Retrieval Augmented Generation) System
+// ============================================
+
+// Semantic similarity keywords for IRC section matching
+const IRC_SEMANTIC_KEYWORDS: Record<string, string[]> = {
+  '§162': ['expense', 'deduction', 'business', 'ordinary', 'necessary', 'cost', 'spend', 'pay', 'purchase'],
+  '§179': ['equipment', 'computer', 'macbook', 'hardware', 'furniture', 'asset', 'depreciation', 'expense', 'write off', 'section 179'],
+  '§168': ['depreciation', 'macrs', 'useful life', 'property', 'asset'],
+  '§168(k)': ['bonus depreciation', 'first year', '60%', '40%', 'accelerated'],
+  '§174': ['r&d', 'research', 'development', 'software', 'experiment', 'amortize', 'capitalize'],
+  '§41': ['r&d credit', 'research credit', 'tax credit', 'innovation', 'development'],
+  '§199A': ['qbi', 'qualified business income', '20%', 'pass-through', 'deduction'],
+  '§274': ['meals', 'entertainment', 'food', 'restaurant', 'travel', 'client dinner', '50%'],
+  '§280A': ['home office', 'work from home', 'simplified', '$5', 'square foot'],
+  '§280F': ['vehicle', 'car', 'luxury', 'auto', 'mileage', 'depreciation limit'],
+  '§1401': ['self-employment', 'se tax', 'social security', 'medicare', '15.3%'],
+  '§401(k)': ['retirement', '401k', 'solo', 'contribution', 'defer'],
+  '§408': ['sep ira', 'retirement', 'contribution', '25%'],
+  '§163': ['interest', 'loan', 'credit card', 'financing'],
+  '§162(l)': ['health insurance', 'medical', 'dental', 'vision'],
+  '§6654': ['estimated tax', 'quarterly', 'payment', 'penalty'],
+  '§1202': ['qsbs', 'small business stock', 'exclusion', 'capital gains'],
+  '§83': ['stock options', 'equity', 'vesting', 'restricted stock'],
+};
+
+// Enhanced IRC retrieval with semantic matching
+export function retrieveRelevantIRC(query: string, topK: number = 5): IRCSection[] {
+  const lowerQuery = query.toLowerCase();
+  const queryWords = lowerQuery.split(/\s+/);
+  
+  // Score each section based on relevance
+  const scoredSections = IRC_KNOWLEDGE_BASE.map(section => {
+    let score = 0;
+    
+    // Direct section reference (highest weight)
+    if (lowerQuery.includes(section.section.toLowerCase())) {
+      score += 100;
+    }
+    
+    // Title match
+    const titleWords = section.title.toLowerCase().split(/\s+/);
+    for (const word of queryWords) {
+      if (titleWords.some(tw => tw.includes(word) || word.includes(tw))) {
+        score += 20;
+      }
+    }
+    
+    // Summary match
+    if (section.summary.toLowerCase().includes(lowerQuery.substring(0, 30))) {
+      score += 15;
+    }
+    for (const word of queryWords) {
+      if (word.length > 3 && section.summary.toLowerCase().includes(word)) {
+        score += 5;
+      }
+    }
+    
+    // Key points match
+    for (const point of section.keyPoints) {
+      for (const word of queryWords) {
+        if (word.length > 3 && point.toLowerCase().includes(word)) {
+          score += 3;
+        }
+      }
+    }
+    
+    // Semantic keyword matching
+    const sectionKeywords = IRC_SEMANTIC_KEYWORDS[section.section] || [];
+    for (const keyword of sectionKeywords) {
+      if (lowerQuery.includes(keyword)) {
+        score += 25;
+      }
+    }
+    
+    // Category match
+    for (const word of queryWords) {
+      if (section.category.toLowerCase().includes(word)) {
+        score += 10;
+      }
+    }
+    
+    // Boost high-relevance sections
+    if (section.businessRelevance === 'high') {
+      score *= 1.5;
+    } else if (section.businessRelevance === 'medium') {
+      score *= 1.2;
+    }
+    
+    return { section, score };
+  });
+  
+  // Sort by score and return top K
+  return scoredSections
+    .filter(s => s.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, topK)
+    .map(s => s.section);
+}
+
+// Build comprehensive business context from app data
+export interface AppDataContext {
+  transactions: Array<{ vendor: string; amount: number; category: string; date: string; context?: string }>;
+  invoices: Array<{ invoiceNumber: string; clientName: string; amount: number; status: string; dueDate?: string }>;
+  agreements: Array<{ clientName: string; value: number; status: string; scopeOfWork?: string }>;
+  accountBalances: { checking: number; savings: number; credit: number; creditAvailable: number; creditLimit: number };
+  receipts?: Array<{ merchant?: string; amount?: number; date?: string }>;
+  taxSummary?: { totalIncome: number; totalExpenses: number; netProfit: number; estimatedTax: number };
+}
+
+export function buildRAGContext(appData: AppDataContext): string {
+  const { transactions, invoices, agreements, accountBalances, receipts, taxSummary } = appData;
+  
+  // Calculate key metrics
+  const totalExpenses = transactions.reduce((sum, t) => sum + t.amount, 0);
+  const totalTransactionCount = transactions.length;
+  const totalRevenue = invoices
+    .filter(i => i.status === 'Paid')
+    .reduce((sum, i) => sum + i.amount, 0);
+  const pendingRevenue = invoices
+    .filter(i => i.status === 'Sent' || i.status === 'Draft')
+    .reduce((sum, i) => sum + i.amount, 0);
+  const contractPipeline = agreements
+    .filter(a => a.status === 'Active')
+    .reduce((sum, a) => sum + a.value, 0);
+  
+  // Group expenses by category with counts
+  const expensesByCategory: Record<string, { total: number; count: number }> = {};
+  transactions.forEach(t => {
+    if (!expensesByCategory[t.category]) {
+      expensesByCategory[t.category] = { total: 0, count: 0 };
+    }
+    expensesByCategory[t.category].total += t.amount;
+    expensesByCategory[t.category].count += 1;
+  });
+  
+  // COMPLETE vendor analytics (ALL vendors, not just top 10)
+  const vendorAnalytics: Record<string, { 
+    total: number; 
+    count: number; 
+    transactions: { date: string; amount: number; category: string }[];
+    firstDate: string;
+    lastDate: string;
+  }> = {};
+  
+  transactions.forEach(t => {
+    const vendor = t.vendor.toLowerCase().trim();
+    if (!vendorAnalytics[vendor]) {
+      vendorAnalytics[vendor] = { 
+        total: 0, 
+        count: 0, 
+        transactions: [],
+        firstDate: t.date,
+        lastDate: t.date
+      };
+    }
+    vendorAnalytics[vendor].total += t.amount;
+    vendorAnalytics[vendor].count += 1;
+    vendorAnalytics[vendor].transactions.push({ date: t.date, amount: t.amount, category: t.category });
+    
+    // Track date range
+    if (new Date(t.date) < new Date(vendorAnalytics[vendor].firstDate)) {
+      vendorAnalytics[vendor].firstDate = t.date;
+    }
+    if (new Date(t.date) > new Date(vendorAnalytics[vendor].lastDate)) {
+      vendorAnalytics[vendor].lastDate = t.date;
+    }
+  });
+  
+  // Sort vendors by spend
+  const sortedVendors = Object.entries(vendorAnalytics)
+    .sort(([, a], [, b]) => b.total - a.total);
+  
+  // Monthly expense breakdown
+  const monthlyExpenses: Record<string, { total: number; count: number }> = {};
+  transactions.forEach(t => {
+    const monthKey = t.date.substring(0, 7); // YYYY-MM
+    if (!monthlyExpenses[monthKey]) {
+      monthlyExpenses[monthKey] = { total: 0, count: 0 };
+    }
+    monthlyExpenses[monthKey].total += t.amount;
+    monthlyExpenses[monthKey].count += 1;
+  });
+  
+  // Sort months chronologically
+  const sortedMonths = Object.entries(monthlyExpenses)
+    .sort(([a], [b]) => a.localeCompare(b));
+  
+  // Recent transactions
+  const recentTransactions = [...transactions]
+    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+    .slice(0, 15);
+  
+  // Net cash position
+  const trueAvailable = Math.max(0, accountBalances.checking - accountBalances.credit);
+  const totalLiquidity = accountBalances.checking + accountBalances.savings;
+  
+  // Calculate average expense
+  const avgExpense = totalTransactionCount > 0 ? totalExpenses / totalTransactionCount : 0;
+  
+  // Build context string
+  let context = `
+═══════════════════════════════════════════════════════════
+           AGENCY DEV WORKS - FINANCIAL INTELLIGENCE
+═══════════════════════════════════════════════════════════
+
+📊 CASH POSITION (Live from Mercury)
+────────────────────────────────────
+• Operating (Checking):  $${accountBalances.checking.toLocaleString()}
+• Reserve (Savings):     $${accountBalances.savings.toLocaleString()}
+• Credit Card Balance:   $${accountBalances.credit.toLocaleString()}
+• Credit Available:      $${accountBalances.creditAvailable.toLocaleString()}
+• Credit Limit:          $${accountBalances.creditLimit.toLocaleString()}
+────────────────────────────────────
+• Total Liquidity:       $${totalLiquidity.toLocaleString()}
+• True Available (after CC autopay on 1st): $${trueAvailable.toLocaleString()}
+
+📈 REVENUE & PIPELINE
+────────────────────────────────────
+• Collected Revenue:     $${totalRevenue.toLocaleString()}
+• Pending Invoices:      $${pendingRevenue.toLocaleString()}
+• Active Contract Value: $${contractPipeline.toLocaleString()}
+
+📉 EXPENSES SUMMARY (ALL TIME)
+────────────────────────────────────
+• Total Expenses:        $${totalExpenses.toLocaleString()}
+• Total Transactions:    ${totalTransactionCount}
+• Average per Transaction: $${avgExpense.toFixed(2)}
+• Net Profit:            $${(totalRevenue - totalExpenses).toLocaleString()}
+
+💳 EXPENSE BREAKDOWN BY CATEGORY (with counts)
+────────────────────────────────────
+${Object.entries(expensesByCategory)
+  .sort(([, a], [, b]) => b.total - a.total)
+  .map(([cat, data]) => `• ${cat}: $${data.total.toLocaleString()} (${data.count} transactions, avg $${(data.total / data.count).toFixed(2)})`)
+  .join('\n')}
+
+🏢 COMPLETE VENDOR ANALYTICS (ALL VENDORS - ALL TIME)
+────────────────────────────────────
+${sortedVendors.map(([vendor, data]) => 
+  `• ${vendor}: $${data.total.toLocaleString()} total | ${data.count} transactions | avg $${(data.total / data.count).toFixed(2)} | ${data.firstDate} to ${data.lastDate}`
+).join('\n')}
+
+📅 MONTHLY EXPENSE TRENDS
+────────────────────────────────────
+${sortedMonths.slice(-12).map(([month, data]) => 
+  `• ${month}: $${data.total.toLocaleString()} (${data.count} transactions)`
+).join('\n')}
+
+📋 RECENT TRANSACTIONS (Last 15)
+────────────────────────────────────
+${recentTransactions.map(t => 
+  `• ${t.date} | ${t.vendor} | $${t.amount.toLocaleString()} | ${t.category}${t.context ? ` - ${t.context.substring(0, 50)}` : ''}`
+).join('\n')}
+
+📄 ACTIVE CLIENT AGREEMENTS
+────────────────────────────────────
+${agreements.filter(a => a.status === 'Active').map(a => 
+  `• ${a.clientName}: $${a.value.toLocaleString()} - ${a.scopeOfWork?.substring(0, 60) || 'N/A'}...`
+).join('\n') || '• No active agreements'}
+
+📨 OUTSTANDING INVOICES
+────────────────────────────────────
+${invoices.filter(i => i.status !== 'Paid').map(i => 
+  `• ${i.invoiceNumber} | ${i.clientName} | $${i.amount.toLocaleString()} | ${i.status} | Due: ${i.dueDate || 'N/A'}`
+).join('\n') || '• All invoices paid'}
+`;
+
+  // Add tax estimates if available
+  if (taxSummary) {
+    context += `
+📊 TAX ESTIMATES (${new Date().getFullYear()})
+────────────────────────────────────
+• Gross Income:          $${taxSummary.totalIncome.toLocaleString()}
+• Total Deductions:      $${taxSummary.totalExpenses.toLocaleString()}
+• Net Profit:            $${taxSummary.netProfit.toLocaleString()}
+• Est. SE Tax (15.3%):   $${(taxSummary.netProfit * 0.9235 * 0.153).toLocaleString()}
+• Est. Income Tax:       $${taxSummary.estimatedTax.toLocaleString()}
+`;
+  }
+
+  // Add receipt count if available
+  if (receipts && receipts.length > 0) {
+    context += `
+📎 RECEIPT VAULT
+────────────────────────────────────
+• Total Receipts: ${receipts.length}
+• Ready for categorization and expense matching
+`;
+  }
+
+  // Add searchable vendor quick-lookup index
+  context += `
+🔍 VENDOR QUICK-LOOKUP INDEX (Searchable)
+────────────────────────────────────
+Use this index to answer questions like "how much did I spend on X" or "how many transactions for Y":
+
+${sortedVendors.map(([vendor, data]) => 
+  `[${vendor.toUpperCase()}]: count=${data.count}, total=$${data.total.toFixed(2)}, avg=$${(data.total / data.count).toFixed(2)}, first=${data.firstDate}, last=${data.lastDate}`
+).join('\n')}
+
+COMMON VENDOR ALIASES (same vendor, different names):
+• cursor / cursor.com / cursor.sh → Cursor (AI Code Editor)
+• openai / open ai / chatgpt → OpenAI
+• vercel / vercel inc → Vercel
+• github / gh → GitHub
+• aws / amazon web services → AWS
+• google / google cloud / gcp → Google Cloud
+• figma → Figma
+• notion → Notion
+• slack → Slack
+• zoom → Zoom
+
+📊 QUICK STATS REFERENCE
+────────────────────────────────────
+• Total vendors used: ${sortedVendors.length}
+• Total transactions: ${totalTransactionCount}
+• Total spent all time: $${totalExpenses.toLocaleString()}
+• Highest single expense: $${Math.max(...transactions.map(t => t.amount)).toLocaleString()}
+• Lowest single expense: $${Math.min(...transactions.map(t => t.amount)).toLocaleString()}
+• Most frequent vendor: ${sortedVendors.length > 0 ? sortedVendors.reduce((a, b) => a[1].count > b[1].count ? a : b)[0] : 'N/A'} (${sortedVendors.length > 0 ? sortedVendors.reduce((a, b) => a[1].count > b[1].count ? a : b)[1].count : 0} transactions)
+• Biggest vendor by spend: ${sortedVendors.length > 0 ? sortedVendors[0][0] : 'N/A'} ($${sortedVendors.length > 0 ? sortedVendors[0][1].total.toLocaleString() : 0})
+`;
+
+  return context;
+}
+
+// Format IRC sections for AI context
+function formatIRCSectionsForChat(sections: IRCSection[]): string {
+  if (sections.length === 0) return '';
+  
+  return `
+═══════════════════════════════════════════════════════════
+           RELEVANT IRC SECTIONS (Retrieved)
+═══════════════════════════════════════════════════════════
+${sections.map(s => `
+📖 ${s.section}: ${s.title}
+${s.summary}
+
+Key Points:
+${s.keyPoints.map(p => `  • ${p}`).join('\n')}
+${s.limits ? `\nLimits: ${Object.entries(s.limits).map(([k, v]) => `${k}: ${v}`).join(', ')}` : ''}
+${s.scheduleC_line ? `\nSchedule C: Line ${s.scheduleC_line}` : ''}
+`).join('\n────────────────────────────────────\n')}
+`;
+}
+
+// Enhanced RAG-powered chat
 export const streamStrategyChat = async (
   message: string, 
   history: {role: 'user' | 'assistant', content: string}[], 
   businessContext: string,
-  onChunk: (text: string) => void
+  onChunk: (text: string) => void,
+  appData?: AppDataContext
 ) => {
   const ai = getAI();
   if (!ai) {
@@ -538,22 +901,44 @@ export const streamStrategyChat = async (
   }
 
   try {
-    // We construct a single multi-turn prompt including the history and business context
-    const historyText = history.map(m => `${m.role === 'user' ? 'CLIENT' : 'STRATEGIST'}: ${m.content}`).join('\n');
+    // Step 1: Retrieve relevant IRC sections based on the query
+    const relevantIRC = retrieveRelevantIRC(message, 5);
+    const ircContext = formatIRCSectionsForChat(relevantIRC);
     
+    // Step 2: Build enhanced context if app data is provided
+    const enhancedContext = appData ? buildRAGContext(appData) : businessContext;
+    
+    // Step 3: Build conversation history
+    const historyText = history.map(m => 
+      `${m.role === 'user' ? '👤 CLIENT' : '🎯 STRATEGIST'}: ${m.content}`
+    ).join('\n\n');
+    
+    // Step 4: Construct the RAG-enhanced prompt
     const fullPrompt = `
-    CURRENT BUSINESS CONTEXT (LEDGER SNAPSHOT):
-    ${businessContext}
+You are responding to a query from Agency Dev Works. Use the following retrieved context to provide accurate, specific answers.
 
-    PREVIOUS CONVERSATION LOG:
-    ${historyText}
+═══════════════════════════════════════════════════════════
+              RETRIEVED BUSINESS CONTEXT
+═══════════════════════════════════════════════════════════
+${enhancedContext}
+${ircContext}
+═══════════════════════════════════════════════════════════
 
-    LATEST CLIENT INQUIRY:
-    ${message}
+CONVERSATION HISTORY:
+────────────────────────────────────
+${historyText || '(New conversation)'}
 
-    STRATEGIST RESPONSE:
-    `;
+────────────────────────────────────
+👤 CURRENT CLIENT QUERY:
+${message}
 
+────────────────────────────────────
+🎯 STRATEGIST RESPONSE:
+Based on the retrieved context above, provide a detailed, actionable response. Always cite specific IRC sections, dollar amounts from the data, and specific recommendations. If the query relates to tax strategy, reference the exact IRC provisions that apply.
+`;
+
+    console.log('[RAG] Retrieved IRC sections:', relevantIRC.map(s => s.section).join(', '));
+    
     const responseStream = await ai.models.generateContentStream({
       model: "gemini-2.0-flash",
       contents: fullPrompt,

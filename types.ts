@@ -88,6 +88,7 @@ export interface Invoice {
   amount: number;
   description: string;
   status: 'Paid' | 'Sent' | 'Draft' | 'Overdue';
+  attachments?: Attachment[];
 }
 
 export interface DashboardStats {

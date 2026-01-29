@@ -7,6 +7,19 @@ const PORT = process.env.PORT || 3000;
 // Your Mercury API key (set as environment variable on Render)
 const MERCURY_API_KEY = process.env.MERCURY_API_KEY;
 
+const getApiKeyFromRequest = (req) => {
+  const authHeader = req.headers?.authorization || req.headers?.Authorization || '';
+  if (!authHeader || typeof authHeader !== 'string') return '';
+  if (authHeader.toLowerCase().startsWith('bearer ')) {
+    return authHeader.slice(7).trim();
+  }
+  return authHeader.trim();
+};
+
+const getMercuryApiKey = (req) => {
+  return MERCURY_API_KEY || getApiKeyFromRequest(req);
+};
+
 // Allowed origins - add your Vercel URL here
 const allowedOrigins = [
   'https://adw-finance-tax-app.vercel.app',
@@ -50,7 +63,8 @@ app.get('/', (req, res) => {
 
 // Proxy: GET /api/mercury/accounts
 app.get('/api/mercury/accounts', async (req, res) => {
-  if (!MERCURY_API_KEY) {
+  const apiKey = getMercuryApiKey(req);
+  if (!apiKey) {
     return res.status(500).json({ error: 'MERCURY_API_KEY not configured on server' });
   }
   
@@ -58,7 +72,7 @@ app.get('/api/mercury/accounts', async (req, res) => {
     console.log('[Proxy] Fetching accounts...');
     const response = await fetch('https://api.mercury.com/api/v1/accounts', {
       headers: {
-        'Authorization': `Bearer ${MERCURY_API_KEY}`,
+        'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/json'
       }
     });
@@ -74,7 +88,8 @@ app.get('/api/mercury/accounts', async (req, res) => {
 
 // Proxy: GET /api/mercury/credit-cards
 app.get('/api/mercury/credit-cards', async (req, res) => {
-  if (!MERCURY_API_KEY) {
+  const apiKey = getMercuryApiKey(req);
+  if (!apiKey) {
     return res.status(500).json({ error: 'MERCURY_API_KEY not configured on server' });
   }
   
@@ -82,7 +97,7 @@ app.get('/api/mercury/credit-cards', async (req, res) => {
     console.log('[Proxy] Fetching credit cards...');
     const response = await fetch('https://api.mercury.com/api/v1/credit-cards', {
       headers: {
-        'Authorization': `Bearer ${MERCURY_API_KEY}`,
+        'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/json'
       }
     });
@@ -99,7 +114,8 @@ app.get('/api/mercury/credit-cards', async (req, res) => {
 
 // Proxy: GET /api/mercury/credit (Mercury Credit endpoint - returns credit account info)
 app.get('/api/mercury/credit', async (req, res) => {
-  if (!MERCURY_API_KEY) {
+  const apiKey = getMercuryApiKey(req);
+  if (!apiKey) {
     return res.status(500).json({ error: 'MERCURY_API_KEY not configured on server' });
   }
   
@@ -107,7 +123,7 @@ app.get('/api/mercury/credit', async (req, res) => {
     console.log('[Proxy] Fetching credit account info...');
     const response = await fetch('https://api.mercury.com/api/v1/credit', {
       headers: {
-        'Authorization': `Bearer ${MERCURY_API_KEY}`,
+        'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/json'
       }
     });
@@ -124,7 +140,8 @@ app.get('/api/mercury/credit', async (req, res) => {
 
 // Proxy: GET /api/mercury/credit/transactions (Credit card transactions)
 app.get('/api/mercury/credit/transactions', async (req, res) => {
-  if (!MERCURY_API_KEY) {
+  const apiKey = getMercuryApiKey(req);
+  if (!apiKey) {
     return res.status(500).json({ error: 'MERCURY_API_KEY not configured on server' });
   }
   
@@ -133,7 +150,7 @@ app.get('/api/mercury/credit/transactions', async (req, res) => {
     console.log('[Proxy] Step 1: Fetching credit account ID...');
     const creditResponse = await fetch('https://api.mercury.com/api/v1/credit', {
       headers: {
-        'Authorization': `Bearer ${MERCURY_API_KEY}`,
+        'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/json'
       }
     });
@@ -158,7 +175,7 @@ app.get('/api/mercury/credit/transactions', async (req, res) => {
     console.log('[Proxy] Step 2: Fetching credit transactions from:', txnUrl);
     const txnResponse = await fetch(txnUrl, {
       headers: {
-        'Authorization': `Bearer ${MERCURY_API_KEY}`,
+        'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/json'
       }
     });
@@ -179,9 +196,95 @@ app.get('/api/mercury/credit/transactions', async (req, res) => {
   }
 });
 
+// Proxy: GET /api/mercury/credit/statements (Credit card statements)
+app.get('/api/mercury/credit/statements', async (req, res) => {
+  const apiKey = getMercuryApiKey(req);
+  if (!apiKey) {
+    return res.status(500).json({ error: 'MERCURY_API_KEY not configured on server' });
+  }
+  
+  try {
+    console.log('[Proxy] Step 1: Fetching credit account ID for statements...');
+    const creditResponse = await fetch('https://api.mercury.com/api/v1/credit', {
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    const creditData = await creditResponse.json();
+    const creditAccountId = creditData.id || creditData.accountId || creditData.creditAccountId || 
+                           (creditData.accounts && creditData.accounts[0]?.id) ||
+                           (creditData.creditCards && creditData.creditCards[0]?.id);
+    
+    if (!creditAccountId) {
+      console.log('[Proxy] No credit account ID found for statements');
+      return res.status(404).json({ error: 'No credit account found', creditData });
+    }
+    
+    const queryString = req.url.includes('?') ? req.url.substring(req.url.indexOf('?')) : '';
+    const statementsUrl = `https://api.mercury.com/api/v1/account/${creditAccountId}/statements${queryString}`;
+    
+    console.log('[Proxy] Step 2: Fetching credit statements from:', statementsUrl);
+    const statementsResponse = await fetch(statementsUrl, {
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    const statementsData = await statementsResponse.json();
+    console.log('[Proxy] Credit statements response status:', statementsResponse.status);
+    
+    res.status(statementsResponse.status).json({
+      ...statementsData,
+      creditAccountId,
+      source: 'mercury_credit'
+    });
+  } catch (error) {
+    console.error('[Proxy] Error fetching credit statements:', error);
+    res.status(500).json({ error: 'Proxy error', message: error.message });
+  }
+});
+
+// Proxy: GET /api/mercury/statements/:statementId/pdf (Download statement PDF)
+app.get('/api/mercury/statements/:statementId/pdf', async (req, res) => {
+  const apiKey = getMercuryApiKey(req);
+  if (!apiKey) {
+    return res.status(500).json({ error: 'MERCURY_API_KEY not configured on server' });
+  }
+  
+  try {
+    const { statementId } = req.params;
+    console.log('[Proxy] Fetching statement PDF:', statementId);
+    
+    const pdfResponse = await fetch(`https://api.mercury.com/api/v1/statements/${statementId}/pdf`, {
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    if (!pdfResponse.ok) {
+      const errorData = await pdfResponse.json().catch(() => ({}));
+      console.log('[Proxy] Statement PDF error:', pdfResponse.status, errorData);
+      return res.status(pdfResponse.status).json(errorData);
+    }
+    
+    const arrayBuffer = await pdfResponse.arrayBuffer();
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="statement-${statementId}.pdf"`);
+    return res.status(200).send(Buffer.from(arrayBuffer));
+  } catch (error) {
+    console.error('[Proxy] Error fetching statement PDF:', error);
+    res.status(500).json({ error: 'Proxy error', message: error.message });
+  }
+});
+
 // Proxy: GET /api/mercury/transactions (GLOBAL endpoint - all transactions)
 app.get('/api/mercury/transactions', async (req, res) => {
-  if (!MERCURY_API_KEY) {
+  const apiKey = getMercuryApiKey(req);
+  if (!apiKey) {
     return res.status(500).json({ error: 'MERCURY_API_KEY not configured on server' });
   }
   
@@ -193,7 +296,7 @@ app.get('/api/mercury/transactions', async (req, res) => {
     console.log('[Proxy] Fetching GLOBAL transactions:', url);
     const response = await fetch(url, {
       headers: {
-        'Authorization': `Bearer ${MERCURY_API_KEY}`,
+        'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/json'
       }
     });
@@ -209,7 +312,8 @@ app.get('/api/mercury/transactions', async (req, res) => {
 
 // Proxy: GET /api/mercury/account/:accountId/transactions
 app.get('/api/mercury/account/:accountId/transactions', async (req, res) => {
-  if (!MERCURY_API_KEY) {
+  const apiKey = getMercuryApiKey(req);
+  if (!apiKey) {
     return res.status(500).json({ error: 'MERCURY_API_KEY not configured on server' });
   }
   
@@ -222,7 +326,7 @@ app.get('/api/mercury/account/:accountId/transactions', async (req, res) => {
     console.log('[Proxy] Fetching transactions:', url);
     const response = await fetch(url, {
       headers: {
-        'Authorization': `Bearer ${MERCURY_API_KEY}`,
+        'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/json'
       }
     });

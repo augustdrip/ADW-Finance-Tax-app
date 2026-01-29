@@ -11,6 +11,8 @@
           font-family: 'Inter', sans-serif; 
           overflow: hidden;
         }
+        
+        /* Premium scrollbar */
         .custom-scrollbar::-webkit-scrollbar {
           width: 4px;
         }
@@ -23,6 +25,71 @@
         }
         .custom-scrollbar::-webkit-scrollbar-thumb:hover {
           background: rgba(255, 255, 255, 0.1);
+        }
+        
+        /* Premium smooth transitions */
+        * {
+          -webkit-font-smoothing: antialiased;
+          -moz-osx-font-smoothing: grayscale;
+        }
+        
+        /* Smooth cursor transitions */
+        button, a, [role="button"] {
+          transition: transform 0.2s cubic-bezier(0.22, 1, 0.36, 1), 
+                      box-shadow 0.2s cubic-bezier(0.22, 1, 0.36, 1),
+                      background-color 0.2s ease,
+                      border-color 0.2s ease,
+                      color 0.2s ease;
+        }
+        
+        /* Premium glow effect for focused elements */
+        button:focus-visible, a:focus-visible, input:focus-visible {
+          outline: none;
+          box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.5), 
+                      0 0 20px rgba(99, 102, 241, 0.3);
+        }
+        
+        /* Smooth card transitions */
+        .group {
+          transition: transform 0.3s cubic-bezier(0.22, 1, 0.36, 1),
+                      box-shadow 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+        }
+        
+        /* Subtle ambient background animation */
+        @keyframes ambientGlow {
+          0%, 100% { opacity: 0.3; transform: scale(1) translate(0, 0); }
+          25% { opacity: 0.5; transform: scale(1.1) translate(5%, 2%); }
+          50% { opacity: 0.4; transform: scale(1.05) translate(-3%, 5%); }
+          75% { opacity: 0.6; transform: scale(1.15) translate(2%, -3%); }
+        }
+        
+        body::before {
+          content: '';
+          position: fixed;
+          top: -50%;
+          left: -50%;
+          width: 200%;
+          height: 200%;
+          background: radial-gradient(ellipse at 30% 20%, rgba(99, 102, 241, 0.08) 0%, transparent 50%),
+                      radial-gradient(ellipse at 70% 80%, rgba(139, 92, 246, 0.06) 0%, transparent 50%),
+                      radial-gradient(ellipse at 50% 50%, rgba(99, 102, 241, 0.04) 0%, transparent 70%);
+          animation: ambientGlow 20s ease-in-out infinite;
+          pointer-events: none;
+          z-index: -1;
+        }
+        
+        /* Smooth text rendering */
+        h1, h2, h3, h4, h5, h6, .font-black, .font-bold {
+          text-rendering: optimizeLegibility;
+        }
+        
+        /* Premium input styling */
+        input, textarea {
+          transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
+        }
+        
+        input:focus, textarea:focus {
+          box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
         }
     </style>
 <script type="importmap">
