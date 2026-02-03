@@ -21,6 +21,21 @@ export interface AccountCredential {
 // Local storage key for offline access
 const CREDENTIALS_KEY = 'adw_credentials_encrypted';
 
+// Current user ID for multi-tenancy
+let currentUserId: string | undefined;
+
+/**
+ * Set the current user ID for multi-tenant storage
+ */
+export function setCurrentUserId(userId: string | undefined): void {
+  currentUserId = userId;
+}
+
+// Get user-specific storage key
+function getUserStorageKey(): string {
+  return currentUserId ? `${CREDENTIALS_KEY}_${currentUserId}` : CREDENTIALS_KEY;
+}
+
 // Simple obfuscation for localStorage (NOT true encryption - just prevents casual viewing)
 // For true security, use proper encryption or don't store locally
 function obfuscate(str: string): string {
@@ -73,7 +88,7 @@ export async function getAllCredentials(): Promise<AccountCredential[]> {
       
       // Cache to localStorage
       if (data && data.length > 0) {
-        localStorage.setItem(CREDENTIALS_KEY, obfuscate(JSON.stringify(data)));
+        localStorage.setItem(getUserStorageKey(), obfuscate(JSON.stringify(data)));
       }
       
       return data || [];
@@ -83,7 +98,7 @@ export async function getAllCredentials(): Promise<AccountCredential[]> {
   }
   
   // Fallback to localStorage
-  const cached = localStorage.getItem(CREDENTIALS_KEY);
+  const cached = localStorage.getItem(getUserStorageKey());
   if (cached) {
     try {
       return JSON.parse(deobfuscate(cached));
@@ -137,7 +152,7 @@ export async function saveCredential(credential: Omit<AccountCredential, 'id' | 
       
       // Update localStorage cache
       const all = await getAllCredentials();
-      localStorage.setItem(CREDENTIALS_KEY, obfuscate(JSON.stringify(all)));
+      localStorage.setItem(getUserStorageKey(), obfuscate(JSON.stringify(all)));
       
       return data;
     } catch (e) {
@@ -146,10 +161,10 @@ export async function saveCredential(credential: Omit<AccountCredential, 'id' | 
   }
   
   // Fallback: save to localStorage only
-  const cached = localStorage.getItem(CREDENTIALS_KEY);
+  const cached = localStorage.getItem(getUserStorageKey());
   const existing = cached ? JSON.parse(deobfuscate(cached)) : [];
   existing.push(newCredential);
-  localStorage.setItem(CREDENTIALS_KEY, obfuscate(JSON.stringify(existing)));
+  localStorage.setItem(getUserStorageKey(), obfuscate(JSON.stringify(existing)));
   
   return newCredential;
 }
@@ -173,7 +188,7 @@ export async function updateCredential(id: string, updates: Partial<AccountCrede
       
       // Update localStorage cache
       const all = await getAllCredentials();
-      localStorage.setItem(CREDENTIALS_KEY, obfuscate(JSON.stringify(all)));
+      localStorage.setItem(getUserStorageKey(), obfuscate(JSON.stringify(all)));
       
       return data;
     } catch (e) {
@@ -199,7 +214,7 @@ export async function deleteCredential(id: string): Promise<boolean> {
       // Update localStorage cache
       const all = await getAllCredentials();
       const filtered = all.filter(c => c.id !== id);
-      localStorage.setItem(CREDENTIALS_KEY, obfuscate(JSON.stringify(filtered)));
+      localStorage.setItem(getUserStorageKey(), obfuscate(JSON.stringify(filtered)));
       
       return true;
     } catch (e) {
@@ -281,7 +296,8 @@ export const credentialsService = {
   saveCredential,
   updateCredential,
   deleteCredential,
-  initializeUtilityCredentials
+  initializeUtilityCredentials,
+  setCurrentUserId
 };
 
 export default credentialsService;

@@ -85,6 +85,7 @@ import { chatHistoryService, ChatSession, ChatMessage as ChatHistoryMessage } fr
 import { embeddingService } from './services/embeddingService';
 import { billsService, Bill, BillCategory, billsHelpers, BillWithTransactions, MatchedTransaction } from './services/billsService';
 import { credentialsService, AccountCredential } from './services/credentialsService';
+import { plaidService, convertPlaidTransaction } from './services/plaidService';
 import { useAuthSafe } from './src/hooks/useAuth';
 
 // Premium Animation Variants
@@ -332,9 +333,27 @@ const App: React.FC = () => {
   const [modalContext, setModalContext] = useState('');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
-    { id: '1', role: 'assistant', content: 'Agency Dev Works Strategist online. Knowledge base: Internal Revenue Code 2024. Bank connection: Mercury Protocol established. How shall we optimize your tax posture today?', timestamp: Date.now() }
-  ]);
+  // Initial chat message is set dynamically based on user type
+  const getInitialChatMessage = (): ChatMessage => {
+    const company = getCompanyName();
+    const bankName = getBankDisplayName();
+    if (isADWUser()) {
+      return { 
+        id: '1', 
+        role: 'assistant', 
+        content: 'Agency Dev Works Strategist online. Knowledge base: Internal Revenue Code 2024. Bank connection: Mercury Protocol established. How shall we optimize your tax posture today?', 
+        timestamp: Date.now() 
+      };
+    }
+    return { 
+      id: '1', 
+      role: 'assistant', 
+      content: `${company} Finance Assistant ready. I have access to the Internal Revenue Code 2024 and your connected bank data. How can I help optimize your business finances and tax strategy today?`, 
+      timestamp: Date.now() 
+    };
+  };
+  
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [isTyping, setIsTyping] = useState(false);
   
   // Chat History State (RAG + Persistence)
@@ -343,7 +362,7 @@ const App: React.FC = () => {
   const [showChatHistory, setShowChatHistory] = useState(false);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   
-  // Load chat sessions on mount
+  // Load chat sessions on mount or when auth changes
   useEffect(() => {
     const loadChatHistory = async () => {
       setIsLoadingHistory(true);
@@ -355,18 +374,22 @@ const App: React.FC = () => {
         const currentSession = await chatHistoryService.getCurrentSession();
         setCurrentSessionId(currentSession.id);
         
-        // If session has messages, load them
+        // If session has messages, load them; otherwise use personalized initial message
         if (currentSession.messages.length > 0) {
           setChatMessages(currentSession.messages);
+        } else {
+          setChatMessages([getInitialChatMessage()]);
         }
       } catch (e) {
         console.error('[ChatHistory] Failed to load:', e);
+        // Fallback to initial message
+        setChatMessages([getInitialChatMessage()]);
       } finally {
         setIsLoadingHistory(false);
       }
     };
     loadChatHistory();
-  }, []);
+  }, [auth?.user?.id]); // Reload when user changes
   
   // Save chat messages when they change
   useEffect(() => {
@@ -384,9 +407,7 @@ const App: React.FC = () => {
   const handleNewChat = () => {
     const newSession = chatHistoryService.createSession();
     setCurrentSessionId(newSession.id);
-    setChatMessages([
-      { id: '1', role: 'assistant', content: 'Agency Dev Works Strategist online. Knowledge base: Internal Revenue Code 2024. Bank connection: Mercury Protocol established. How shall we optimize your tax posture today?', timestamp: Date.now() }
-    ]);
+    setChatMessages([getInitialChatMessage()]);
     chatHistoryService.getAllSessions().then(setChatSessions);
     setShowChatHistory(false);
   };
@@ -396,9 +417,7 @@ const App: React.FC = () => {
     const session = await chatHistoryService.getSession(sessionId);
     if (session) {
       setCurrentSessionId(session.id);
-      setChatMessages(session.messages.length > 0 ? session.messages : [
-        { id: '1', role: 'assistant', content: 'Agency Dev Works Strategist online. Knowledge base: Internal Revenue Code 2024. Bank connection: Mercury Protocol established. How shall we optimize your tax posture today?', timestamp: Date.now() }
-      ]);
+      setChatMessages(session.messages.length > 0 ? session.messages : [getInitialChatMessage()]);
       chatHistoryService.setCurrentSession(session.id);
     }
     setShowChatHistory(false);
@@ -454,7 +473,7 @@ const App: React.FC = () => {
         
         // Save credit card transactions separately
         const ccTransactions = updated.filter(t => t.context?.includes('Credit Card'));
-        localStorage.setItem('creditcard_transactions', JSON.stringify(ccTransactions));
+        localStorage.setItem(getUserStorageKey('creditcard_transactions'), JSON.stringify(ccTransactions));
         
         return updated;
       });
@@ -470,47 +489,229 @@ const App: React.FC = () => {
   };
   const modalFormRef = useRef<HTMLFormElement>(null);
 
+  // ADW company identifier - all @agencydevworks.ai emails share this account
+  const ADW_COMPANY_ID = 'adw-company-shared';
+  
+  // ADW team members who have access to the shared Mercury account
+  const ADW_TEAM_EMAILS = [
+    'ali@agencydevworks.ai',
+    'mario@agencydevworks.ai',
+    'sajjad@agencydevworks.ai',
+    'mustafa@agencydevworks.ai',
+    'hassanain@agencydevworks.ai',
+    'diego@agencydevworks.ai',
+  ];
+  
+  // Check if user is part of ADW (agencydevworks.ai domain or in team list)
+  const isADWUser = () => {
+    const email = auth?.user?.email?.toLowerCase();
+    if (!email) return false;
+    
+    // Check if email is in the explicit team list
+    if (ADW_TEAM_EMAILS.includes(email)) return true;
+    
+    // Also allow any @agencydevworks.ai email
+    return email.endsWith('@agencydevworks.ai');
+  };
+  
+  // Get the effective user ID - ADW users share a company account
+  const getEffectiveUserId = () => {
+    if (isADWUser()) {
+      return ADW_COMPANY_ID; // All ADW team members share this
+    }
+    return auth?.user?.id;
+  };
+  
+  // ============================================
+  // CLIENT PERSONALIZATION HELPERS
+  // These ensure non-ADW clients see their own branding
+  // ============================================
+  
+  // Get the company name to display - uses profile data for clients
+  const getCompanyName = () => {
+    if (isADWUser()) {
+      return 'Agency DevWorks';
+    }
+    // Use company name from profile, or fallback to user's name or email
+    return auth?.profile?.company_name || 
+           auth?.user?.user_metadata?.full_name || 
+           auth?.user?.email?.split('@')[0] || 
+           'Your Company';
+  };
+  
+  // Get the display name for the user
+  const getUserDisplayName = () => {
+    return auth?.user?.user_metadata?.full_name || 
+           auth?.profile?.full_name ||
+           auth?.user?.email?.split('@')[0] || 
+           'User';
+  };
+  
+  // Get personalized section titles based on company name
+  const getSectionTitle = (section: string) => {
+    const company = getCompanyName();
+    const isADW = isADWUser();
+    
+    switch (section) {
+      case 'dashboard':
+        return isADW ? 'Agency DevWorks Dashboard' : `${company} Dashboard`;
+      case 'strategist':
+        return isADW ? 'ADW Strategist HQ' : `${company} Strategy Center`;
+      case 'warroom':
+        return isADW ? 'ADW AI War Room' : `${company} AI Assistant`;
+      case 'bills':
+        return isADW ? 'ADW Bills & Utilities' : `${company} Bills & Utilities`;
+      case 'revenue':
+        return isADW ? 'ADW Revenue Logs' : `${company} Revenue`;
+      case 'agreements':
+        return isADW ? 'ADW Service Agreements' : `${company} Agreements`;
+      case 'receipts':
+        return isADW ? 'ADW Receipt Vault' : `${company} Receipt Vault`;
+      case 'expenditures':
+        return isADW ? 'ADW Expenditure Ledger' : `${company} Expenses`;
+      case 'bank':
+        return isADW ? 'Mercury Bank' : 'Connected Bank';
+      default:
+        return section;
+    }
+  };
+  
+  // Get the bank/account name to display
+  const getBankDisplayName = () => {
+    if (isADWUser()) {
+      return 'Mercury';
+    }
+    return 'Bank'; // Generic for Plaid-connected banks
+  };
+  
+  // Helper to get user-specific localStorage key - REQUIRES valid user ID
+  const getUserStorageKey = (key: string) => {
+    const effectiveId = getEffectiveUserId();
+    if (!effectiveId) {
+      // Don't fall back to base key - that causes data bleed between users
+      console.warn(`[Storage] No user ID available for key: ${key}`);
+      return `${key}_anonymous_temp`;
+    }
+    return `${key}_${effectiveId}`;
+  };
+
   const loadData = async () => {
+    const userId = getEffectiveUserId();
+    const userEmail = auth?.user?.email?.toLowerCase();
+    const isADW = isADWUser();
+    
+    // DON'T load data if no user is authenticated - prevents loading old/other user data
+    if (!userId) {
+      console.log('[LoadData] No user ID - skipping data load');
+      setTransactions([]);
+      setAgreements([]);
+      setInvoices([]);
+      setAssets([]);
+      setBankBalance(0);
+      setAccountBalances({ checking: 0, savings: 0, credit: 0, creditLimit: 0, creditAvailable: 0, creditPending: 0 });
+      setIsSyncing(false);
+      return;
+    }
+    
     setIsSyncing(true);
+    console.log(`[LoadData] Loading data for: ${userEmail} | ID: ${userId} | ADW: ${isADW}`);
+    
+    // CLEAR legacy localStorage keys (from before multi-tenancy) on first load
+    // This ensures non-ADW users don't see old ADW data
+    const legacyCleared = localStorage.getItem('legacy_data_cleared_v2');
+    if (!legacyCleared) {
+      console.log('[LoadData] Clearing legacy localStorage keys...');
+      // Remove old keys that don't have user ID suffix
+      localStorage.removeItem('mercury_transactions');
+      localStorage.removeItem('creditcard_transactions');
+      localStorage.removeItem('agreements');
+      localStorage.removeItem('invoices');
+      localStorage.removeItem('assets');
+      localStorage.removeItem('mercury_balance');
+      localStorage.removeItem('mercury_accounts');
+      localStorage.setItem('legacy_data_cleared_v2', 'true');
+    }
+    
     try {
-      // Load from localStorage first (most reliable)
-      const savedMercuryTransactions = localStorage.getItem('mercury_transactions');
-      const savedCreditCardTransactions = localStorage.getItem('creditcard_transactions');
-      const savedAgreements = localStorage.getItem('agreements');
-      const savedInvoices = localStorage.getItem('invoices');
-      const savedAssets = localStorage.getItem('assets');
+      // Load from user-specific localStorage first
+      const savedMercuryTransactions = localStorage.getItem(getUserStorageKey('mercury_transactions'));
+      const savedPlaidTransactions = localStorage.getItem(getUserStorageKey('plaid_transactions'));
+      const savedCreditCardTransactions = localStorage.getItem(getUserStorageKey('creditcard_transactions'));
+      const savedAgreements = localStorage.getItem(getUserStorageKey('agreements'));
+      const savedInvoices = localStorage.getItem(getUserStorageKey('invoices'));
+      const savedAssets = localStorage.getItem(getUserStorageKey('assets'));
       
-      const mercuryTransactions = savedMercuryTransactions ? JSON.parse(savedMercuryTransactions) : [];
+      console.log(`[LoadData] User: ${userEmail} | ADW: ${isADW}`);
+      console.log(`[LoadData] Mercury data: ${!!savedMercuryTransactions} | Plaid data: ${!!savedPlaidTransactions}`);
+      
+      // ADW users get Mercury transactions, non-ADW users get Plaid transactions
+      const bankTransactions = isADW 
+        ? (savedMercuryTransactions ? JSON.parse(savedMercuryTransactions) : [])
+        : (savedPlaidTransactions ? JSON.parse(savedPlaidTransactions) : []);
       const creditCardTransactions = savedCreditCardTransactions ? JSON.parse(savedCreditCardTransactions) : [];
       const localAgreements = savedAgreements ? JSON.parse(savedAgreements) : [];
       const localInvoices = savedInvoices ? JSON.parse(savedInvoices) : [];
       const localAssets = savedAssets ? JSON.parse(savedAssets) : [];
       
-      // Try to fetch from Supabase (may fail if tables don't exist)
+      // Load bank balance based on user type
+      if (isADW) {
+        const savedBalance = localStorage.getItem(getUserStorageKey('mercury_balance'));
+        const savedAccounts = localStorage.getItem(getUserStorageKey('mercury_accounts'));
+        if (savedBalance) setBankBalance(parseFloat(savedBalance));
+        if (savedAccounts) setAccountBalances(JSON.parse(savedAccounts));
+        console.log(`[LoadData] ADW user - Mercury balance: ${savedBalance}`);
+      } else {
+        // Non-ADW users - load from Plaid balance
+        const savedBalance = localStorage.getItem(getUserStorageKey('plaid_balance'));
+        if (savedBalance) {
+          setBankBalance(parseFloat(savedBalance));
+          console.log(`[LoadData] Non-ADW user - Plaid balance: ${savedBalance}`);
+        } else {
+          setBankBalance(0);
+          setAccountBalances({ checking: 0, savings: 0, credit: 0, creditLimit: 0, creditAvailable: 0, creditPending: 0 });
+          console.log('[LoadData] Non-ADW user - no Plaid data yet');
+        }
+      }
+      
+      // Try to fetch from Supabase with user_id filter (multi-tenant)
       const [tData, iData, aData, asData] = await Promise.all([
-        db.transactions.fetch().catch(() => []),
-        db.invoices.fetch().catch(() => []),
-        db.agreements.fetch().catch(() => []),
-        db.assets.fetch().catch(() => [])
+        db.transactions.fetch(userId).catch(() => []),
+        db.invoices.fetch(userId).catch(() => []),
+        db.agreements.fetch(userId).catch(() => []),
+        db.assets.fetch(userId).catch(() => [])
       ]);
       
-      // Combine Supabase data with localStorage data (localStorage takes priority)
-      const supabaseTransactions = tData?.length ? tData : MOCK_DATA.transactions as any;
+      // For new users (no data), show empty state - no mock data
+      // For returning users, show their saved data
+      const isNewUser = !userId || (!tData?.length && !bankTransactions.length && !creditCardTransactions.length);
       
-      // Merge: localStorage Mercury transactions + Credit Card + Supabase/mock data (avoiding duplicates)
-      const existingIds = new Set([
-        ...mercuryTransactions.map((t: any) => t.id),
-        ...creditCardTransactions.map((t: any) => t.id)
-      ]);
-      const uniqueSupabase = supabaseTransactions.filter((t: any) => !existingIds.has(t.id));
-      const allTransactions = [...mercuryTransactions, ...creditCardTransactions, ...uniqueSupabase];
-      
-      setTransactions(allTransactions);
-      
-      // Use localStorage data if available, otherwise Supabase, otherwise mock
-      setAgreements(localAgreements.length ? localAgreements : (aData?.length ? aData : MOCK_DATA.agreements as any));
-      setInvoices(localInvoices.length ? localInvoices : (iData?.length ? iData : MOCK_DATA.invoices as any));
-      setAssets(localAssets.length ? localAssets : (asData?.length ? asData : MOCK_DATA.assets as any));
+      if (isNewUser && userId) {
+        // New user - start with empty data
+        console.log('[LoadData] New user - starting fresh');
+        setTransactions([]);
+        setAgreements([]);
+        setInvoices([]);
+        setAssets([]);
+      } else {
+        // Combine Supabase data with localStorage data
+        const supabaseTransactions = tData?.length ? tData : [];
+        
+        // Merge: localStorage bank transactions (Mercury or Plaid) + Credit Card + Supabase data
+        const existingIds = new Set([
+          ...bankTransactions.map((t: any) => t.id),
+          ...creditCardTransactions.map((t: any) => t.id)
+        ]);
+        const uniqueSupabase = supabaseTransactions.filter((t: any) => !existingIds.has(t.id));
+        const allTransactions = [...bankTransactions, ...creditCardTransactions, ...uniqueSupabase];
+        
+        console.log(`[LoadData] Loaded ${bankTransactions.length} bank + ${creditCardTransactions.length} credit card + ${uniqueSupabase.length} supabase transactions`);
+        setTransactions(allTransactions);
+        
+        // Use localStorage data if available, otherwise Supabase data
+        setAgreements(localAgreements.length ? localAgreements : (aData || []));
+        setInvoices(localInvoices.length ? localInvoices : (iData || []));
+        setAssets(localAssets.length ? localAssets : (asData || []));
+      }
       
       // Load receipts from adw-receipts Supabase (separate project)
       loadReceipts();
@@ -519,20 +720,20 @@ const App: React.FC = () => {
       loadBills();
     } catch (e) {
       console.error("Load Error:", e);
-      // Fallback to localStorage then mock data
-      const savedMercuryTransactions = localStorage.getItem('mercury_transactions');
-      const savedCreditCardTransactions = localStorage.getItem('creditcard_transactions');
-      const savedAgreements = localStorage.getItem('agreements');
-      const savedInvoices = localStorage.getItem('invoices');
-      const savedAssets = localStorage.getItem('assets');
+      // Fallback to user-specific localStorage
+      const savedMercuryTransactions = localStorage.getItem(getUserStorageKey('mercury_transactions'));
+      const savedCreditCardTransactions = localStorage.getItem(getUserStorageKey('creditcard_transactions'));
+      const savedAgreements = localStorage.getItem(getUserStorageKey('agreements'));
+      const savedInvoices = localStorage.getItem(getUserStorageKey('invoices'));
+      const savedAssets = localStorage.getItem(getUserStorageKey('assets'));
       
       const mercuryTransactions = savedMercuryTransactions ? JSON.parse(savedMercuryTransactions) : [];
       const creditCardTransactions = savedCreditCardTransactions ? JSON.parse(savedCreditCardTransactions) : [];
       const allTxns = [...mercuryTransactions, ...creditCardTransactions];
-      setTransactions(allTxns.length ? allTxns : MOCK_DATA.transactions as any);
-      setAgreements(savedAgreements ? JSON.parse(savedAgreements) : MOCK_DATA.agreements as any);
-      setInvoices(savedInvoices ? JSON.parse(savedInvoices) : MOCK_DATA.invoices as any);
-      setAssets(savedAssets ? JSON.parse(savedAssets) : MOCK_DATA.assets as any);
+      setTransactions(allTxns);
+      setAgreements(savedAgreements ? JSON.parse(savedAgreements) : []);
+      setInvoices(savedInvoices ? JSON.parse(savedInvoices) : []);
+      setAssets(savedAssets ? JSON.parse(savedAssets) : []);
     } finally {
       setIsSyncing(false);
     }
@@ -617,7 +818,68 @@ const App: React.FC = () => {
     return transactions.find(t => t.id === txnId) || null;
   };
 
-  useEffect(() => { loadData(); }, []);
+  // Set user ID in services for multi-tenancy when auth changes
+  // ADW users share a company account, others get individual accounts
+  useEffect(() => {
+    const effectiveId = getEffectiveUserId();
+    billsService.setCurrentUserId(effectiveId);
+    credentialsService.setCurrentUserId(effectiveId);
+    console.log(`[Auth] User ${auth?.user?.email} -> effective ID: ${effectiveId}`);
+  }, [auth?.user?.id, auth?.user?.email]);
+
+  // Migrate existing ADW data to shared company account
+  useEffect(() => {
+    const migrateADWData = () => {
+      const userEmail = auth?.user?.email?.toLowerCase();
+      
+      // Only migrate for agencydevworks.ai accounts
+      if (!userEmail?.includes('agencydevworks.ai')) return;
+      
+      // Check if migration already done for the shared ADW account
+      const migrationKey = `data_migrated_${ADW_COMPANY_ID}`;
+      if (localStorage.getItem(migrationKey)) {
+        console.log('[Migration] ADW data already migrated to shared account');
+        return;
+      }
+      
+      console.log('[Migration] Starting ADW data migration to shared company account');
+      
+      // Keys to migrate from old (non-user-specific) storage to shared ADW account
+      const keysToMigrate = [
+        'mercury_transactions',
+        'creditcard_transactions', 
+        'agreements',
+        'invoices',
+        'assets',
+        'adw_bills',
+        'adw_bill_payments',
+        'adw_credentials_encrypted'
+      ];
+      
+      let migratedCount = 0;
+      keysToMigrate.forEach(key => {
+        const oldData = localStorage.getItem(key);
+        if (oldData) {
+          const newKey = `${key}_${ADW_COMPANY_ID}`;
+          // Only migrate if new key doesn't exist
+          if (!localStorage.getItem(newKey)) {
+            localStorage.setItem(newKey, oldData);
+            migratedCount++;
+            console.log(`[Migration] Migrated ${key} -> ${newKey}`);
+          }
+        }
+      });
+      
+      // Mark migration as complete for the shared account
+      localStorage.setItem(migrationKey, 'true');
+      console.log(`[Migration] Complete - migrated ${migratedCount} data sets to shared ADW account`);
+    };
+    
+    migrateADWData();
+  }, [auth?.user?.email]);
+
+  // Reload data when user changes (login/logout)
+  useEffect(() => { loadData(); }, [auth?.user?.id]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -650,7 +912,9 @@ const App: React.FC = () => {
     return transactions;
   }, [transactions, currentMonth, activeTab]);
 
-  const [bankBalance, setBankBalance] = useState<number>(parseFloat(localStorage.getItem('mercury_balance') || '0'));
+  // Start with 0 - actual values will be loaded by loadData() based on user type
+  // (Non-ADW users should never see Mercury data)
+  const [bankBalance, setBankBalance] = useState<number>(0);
   const [accountBalances, setAccountBalances] = useState<{ 
     checking: number; 
     savings: number; 
@@ -658,10 +922,7 @@ const App: React.FC = () => {
     creditLimit: number;
     creditAvailable: number;
     creditPending: number;
-  }>(() => {
-    const saved = localStorage.getItem('mercury_accounts');
-    return saved ? JSON.parse(saved) : { checking: 0, savings: 0, credit: 0, creditLimit: 0, creditAvailable: 0, creditPending: 0 };
-  });
+  }>({ checking: 0, savings: 0, credit: 0, creditLimit: 0, creditAvailable: 0, creditPending: 0 });
 
   const stats: DashboardStats = useMemo(() => {
     const totalSpent = transactions.reduce((sum, t) => sum + t.amount, 0);
@@ -807,6 +1068,13 @@ const App: React.FC = () => {
   };
 
   const handleMercurySync = async (overrideKey?: string) => {
+    // Mercury is ONLY for ADW users - non-ADW users use Plaid
+    if (!isADWUser()) {
+      console.log('[Mercury] Sync blocked - not an ADW user');
+      setNotification({ message: "Mercury is for ADW accounts only. Connect your bank via Plaid.", type: 'error' });
+      return;
+    }
+    
     // Check for API key: env variable first, then localStorage
     const hasEnvKey = hasMercuryEnvKey();
     const keyToUse = overrideKey ?? (mercuryApiKey || undefined);
@@ -845,7 +1113,7 @@ const App: React.FC = () => {
       }
       
       // Save ALL Mercury transactions to localStorage for persistence
-      localStorage.setItem('mercury_transactions', JSON.stringify(processedTransactions));
+      localStorage.setItem(getUserStorageKey('mercury_transactions'), JSON.stringify(processedTransactions));
       localStorage.setItem('mercury_last_sync', new Date().toISOString());
       console.log(`[Sync] ✅ Saved ${processedTransactions.length} fresh transactions`);
       
@@ -868,8 +1136,8 @@ const App: React.FC = () => {
           creditAvailable: balanceData.creditAvailable,
           creditPending: balanceData.creditPending
         });
-        localStorage.setItem('mercury_balance', String(balanceData.total));
-        localStorage.setItem('mercury_accounts', JSON.stringify({ 
+        localStorage.setItem(getUserStorageKey('mercury_balance'), String(balanceData.total));
+        localStorage.setItem(getUserStorageKey('mercury_accounts'), JSON.stringify({ 
           checking: balanceData.checking, 
           savings: balanceData.savings, 
           credit: balanceData.credit,
@@ -877,7 +1145,7 @@ const App: React.FC = () => {
           creditAvailable: balanceData.creditAvailable,
           creditPending: balanceData.creditPending
         }));
-        console.log("[Mercury] Account balances saved:", balanceData);
+        console.log("[Mercury] Account balances saved for ADW:", balanceData);
       } catch (balanceError) {
         console.warn("Could not fetch balance:", balanceError);
       }
@@ -918,6 +1186,88 @@ const App: React.FC = () => {
     setTimeout(() => handleMercurySync(key), 0);
   };
 
+  // Plaid Sync for non-ADW users
+  const [isPlaidSyncing, setIsPlaidSyncing] = useState(false);
+  
+  const handlePlaidSync = async () => {
+    const userId = getEffectiveUserId();
+    if (!userId) {
+      setNotification({ message: "Please log in to sync your bank", type: 'error' });
+      return;
+    }
+    
+    setIsPlaidSyncing(true);
+    setNotification({ message: "Syncing your bank transactions...", type: 'success' });
+    
+    try {
+      // Fetch transactions from Plaid
+      const result = await plaidService.getTransactions(userId);
+      
+      if (result.transactions.length === 0) {
+        setNotification({ message: "No new transactions found", type: 'success' });
+        setIsPlaidSyncing(false);
+        return;
+      }
+      
+      // Convert Plaid transactions to our format
+      const processedTransactions = result.transactions.map(t => convertPlaidTransaction(t));
+      
+      console.log(`[Plaid] Synced ${processedTransactions.length} transactions`);
+      
+      // Calculate total balance from accounts
+      const totalBalance = result.accounts.reduce((sum, acc) => {
+        if (acc.type === 'depository') {
+          return sum + (acc.balances.available || acc.balances.current || 0);
+        }
+        return sum;
+      }, 0);
+      
+      const creditBalance = result.accounts.reduce((sum, acc) => {
+        if (acc.type === 'credit') {
+          return sum + (acc.balances.current || 0);
+        }
+        return sum;
+      }, 0);
+      
+      // Update state
+      setBankBalance(totalBalance);
+      setAccountBalances(prev => ({
+        ...prev,
+        checking: totalBalance,
+        credit: creditBalance,
+      }));
+      
+      // Save to localStorage with user-specific key
+      localStorage.setItem(getUserStorageKey('plaid_transactions'), JSON.stringify(processedTransactions));
+      localStorage.setItem(getUserStorageKey('plaid_balance'), String(totalBalance));
+      localStorage.setItem('plaid_last_sync', new Date().toISOString());
+      
+      // Merge with existing transactions (avoiding duplicates)
+      setTransactions(prev => {
+        const existingIds = new Set(prev.map(t => t.id));
+        const newTransactions = processedTransactions.filter(t => !existingIds.has(t.id));
+        return [...prev, ...newTransactions];
+      });
+      
+      setLastSyncTime(new Date().toLocaleString());
+      setNotification({ message: `Synced ${processedTransactions.length} transactions!`, type: 'success' });
+    } catch (error: any) {
+      console.error('[Plaid] Sync error:', error);
+      setNotification({ message: error.message || "Failed to sync bank transactions", type: 'error' });
+    } finally {
+      setIsPlaidSyncing(false);
+    }
+  };
+  
+  // Universal sync function - calls the right sync based on user type
+  const handleBankSync = () => {
+    if (isADWUser()) {
+      handleMercurySync();
+    } else {
+      handlePlaidSync();
+    }
+  };
+
   const handleEnhanceContext = async (vendor: string, amount: string) => {
     if (!modalContext.trim()) return;
     setIsEnhancing(true);
@@ -943,13 +1293,13 @@ const App: React.FC = () => {
         
         // Save Mercury transactions (those with bankVerified) to localStorage
         const mercuryTransactions = newTransactions.filter(t => t.bankVerified);
-        localStorage.setItem('mercury_transactions', JSON.stringify(mercuryTransactions));
+        localStorage.setItem(getUserStorageKey('mercury_transactions'), JSON.stringify(mercuryTransactions));
         
         return newTransactions;
       });
       
-      // Also try to save to Supabase
-      db.transactions.upsert(updated).catch(e => console.warn("Supabase save failed:", e));
+      // Also try to save to Supabase with user_id (ADW users share company account)
+      db.transactions.upsert(updated, getEffectiveUserId()).catch(e => console.warn("Supabase save failed:", e));
       
       setNotification({ message: `Analysis complete for ${transaction.vendor}`, type: 'success' });
       return updated;
@@ -1008,7 +1358,7 @@ const App: React.FC = () => {
       
       setMonthlySummary(summary);
       localStorage.setItem('monthly_summary', JSON.stringify(summary));
-      setNotification({ message: "Strategic summary generated! Check the analysis below.", type: 'success' });
+      setNotification({ message: "Strategic summary generated!", type: 'success' });
     } catch (error: any) {
       console.error("Summary generation error:", error);
       setNotification({ message: `Summary failed: ${error.message || 'Unknown error'}. Try syncing Mercury first.`, type: 'alert' });
@@ -1038,13 +1388,13 @@ const App: React.FC = () => {
         
         // Update localStorage - remove from mercury_transactions
         const mercuryTransactions = updated.filter(t => t.bankVerified || t.bankId);
-        localStorage.setItem('mercury_transactions', JSON.stringify(mercuryTransactions));
+        localStorage.setItem(getUserStorageKey('mercury_transactions'), JSON.stringify(mercuryTransactions));
         
         return updated;
       });
       
-      // Also try to delete from Supabase (may fail if not connected)
-      db.transactions.delete(id).catch(e => console.warn("Supabase delete failed:", e));
+      // Also try to delete from Supabase with user_id verification
+      db.transactions.delete(id, getEffectiveUserId()).catch(e => console.warn("Supabase delete failed:", e));
       
       setNotification({ message: "Record permanently expunged.", type: 'success' });
     } catch (e) { 
@@ -1080,7 +1430,7 @@ const App: React.FC = () => {
         
         // Update localStorage
         const mercuryTransactions = updated.filter(t => t.bankVerified || t.bankId);
-        localStorage.setItem('mercury_transactions', JSON.stringify(mercuryTransactions));
+        localStorage.setItem(getUserStorageKey('mercury_transactions'), JSON.stringify(mercuryTransactions));
         localStorage.setItem('transactions', JSON.stringify(updated));
         
         return updated;
@@ -1108,7 +1458,7 @@ const App: React.FC = () => {
       
       // Update localStorage
       const mercuryTransactions = updated.filter(t => t.bankVerified || t.bankId);
-      localStorage.setItem('mercury_transactions', JSON.stringify(mercuryTransactions));
+      localStorage.setItem(getUserStorageKey('mercury_transactions'), JSON.stringify(mercuryTransactions));
       localStorage.setItem('transactions', JSON.stringify(updated));
       
       return updated;
@@ -1476,8 +1826,8 @@ const App: React.FC = () => {
         >
           {[
             { id: 'dashboard', icon: LayoutDashboard, label: 'Strategist HQ' },
-            { id: 'transactions', icon: Receipt, label: 'Expenditures' },
-            { id: 'receipts', icon: Paperclip, label: 'Receipt Vault' },
+            { id: 'transactions', icon: Receipt, label: 'Expenses' },
+            { id: 'receipts', icon: Paperclip, label: 'Receipts' },
             { id: 'agreements', icon: FileSignature, label: 'Service Agreements' },
             { id: 'invoices', icon: CreditCard, label: 'Revenue Log' },
             { id: 'bills', icon: Home, label: 'Bills & Utilities' },
@@ -1525,14 +1875,25 @@ const App: React.FC = () => {
       {/* Main Content */}
       <main className="flex-1 overflow-auto bg-[radial-gradient(circle_at_top_right,_var(--tw-gradient-stops))] from-indigo-950/20 via-[#09090A] to-[#09090A] custom-scrollbar">
         <header className="h-16 border-b border-white/5 flex items-center justify-between px-8 bg-[#09090A]/80 backdrop-blur-xl sticky top-0 z-30">
-          <h1 className="text-lg font-bold text-white capitalize">{activeTab.replace('-', ' ')}</h1>
+          <div className="flex items-center gap-3">
+            <h1 className="text-lg font-bold text-white">{getCompanyName()}</h1>
+            <span className="text-slate-500">|</span>
+            <span className="text-sm text-slate-400 capitalize">{activeTab.replace('-', ' ')}</span>
+          </div>
           <div className="flex items-center gap-4">
+            {/* Mercury Bank indicator */}
             <div className="flex items-center gap-2 bg-indigo-500/10 px-3 py-1.5 rounded-full border border-indigo-500/20">
               <LinkIcon size={12} className="text-indigo-400" />
               <span className="text-[10px] font-black text-white uppercase tracking-widest">Mercury Active</span>
             </div>
-            <button onClick={loadData} disabled={isSyncing} className="p-2 text-slate-500 hover:text-indigo-400 transition-colors">
-              <RefreshCcw size={18} className={isSyncing ? 'animate-spin' : ''} />
+            {/* Sync button - syncs from appropriate bank source */}
+            <button 
+              onClick={handleBankSync} 
+              disabled={isSyncing || isMercurySyncing || isPlaidSyncing} 
+              className="p-2 text-slate-500 hover:text-indigo-400 transition-colors"
+              title="Sync from Mercury"
+            >
+              <RefreshCcw size={18} className={(isSyncing || isMercurySyncing || isPlaidSyncing) ? 'animate-spin' : ''} />
             </button>
             <button onClick={() => setShowModal('settings')} className="p-2 text-slate-400 hover:text-white transition-colors" title="Settings">
               <Settings size={18} />
@@ -1544,7 +1905,7 @@ const App: React.FC = () => {
             
             {/* User Menu & Logout */}
             {auth?.user && (
-              <div className="flex items-center gap-2 ml-2 pl-4 border-l border-white/10">
+              <div className="flex items-center gap-3 ml-2 pl-4 border-l border-white/10">
                 <div className="flex items-center gap-2">
                   {auth.user.user_metadata?.avatar_url ? (
                     <img 
@@ -1563,10 +1924,11 @@ const App: React.FC = () => {
                 </div>
                 <button 
                   onClick={() => auth.signOut()} 
-                  className="p-2 text-slate-400 hover:text-rose-400 transition-colors" 
+                  className="flex items-center gap-2 px-3 py-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 hover:text-rose-300 rounded-lg border border-rose-500/20 transition-all text-xs font-medium" 
                   title="Sign Out"
                 >
-                  <LogOut size={18} />
+                  <LogOut size={14} />
+                  <span className="hidden sm:inline">Logout</span>
                 </button>
               </div>
             )}
@@ -1604,15 +1966,19 @@ const App: React.FC = () => {
                     <div className="space-y-2">
                       <div className="flex items-center gap-2">
                         <motion.div 
-                          className="p-1.5 bg-indigo-500 text-white rounded-lg shadow-lg shadow-indigo-500/20"
+                          className={`p-1.5 bg-indigo-500 shadow-indigo-500/20 text-white rounded-lg shadow-lg`}
                           animate={{ scale: [1, 1.1, 1], opacity: [0.8, 1, 0.8] }}
                           transition={{ duration: 2, repeat: Infinity, ease: 'easeInOut' }}
                         >
                           <Zap size={16} fill="currentColor" />
                         </motion.div>
-                        <span className="text-[10px] font-black text-indigo-400 uppercase tracking-widest">Immediate Breakthrough Insights</span>
+                        <span className={`text-[10px] font-black text-indigo-400 uppercase tracking-widest`}>
+                          {'Immediate Breakthrough Insights'}
+                        </span>
                       </div>
-                      <h2 className="text-2xl font-black text-white leading-tight">Optimizing IRC § 41 R&D Pipeline</h2>
+                      <h2 className="text-2xl font-black text-white leading-tight">
+                        Optimizing IRC § 41 R&D Pipeline
+                      </h2>
                       <p className="text-xs text-slate-400 max-w-md leading-relaxed">
                         Strategist analysis detected 3 high-probability tax deductions waiting for verification. Increase Audit Shield to 98% with one click.
                       </p>
@@ -1628,33 +1994,35 @@ const App: React.FC = () => {
                   </div>
                 </motion.div>
 
-                {/* Mercury Bank Status Card - Checking */}
+                {/* Bank Status Card - Checking */}
                 <motion.div 
                   variants={staggerItem}
                   whileHover={{ y: -4, scale: 1.02, transition: { type: 'spring', stiffness: 300 } }}
-                  className="bg-[#121216] border border-indigo-500/20 rounded-[2rem] p-8 shadow-2xl relative overflow-hidden group"
+                  className={`bg-[#121216] border border-indigo-500/20 rounded-[2rem] p-8 shadow-2xl relative overflow-hidden group`}
                 >
                    <div className="relative z-10 space-y-4">
                       <div className="flex justify-between items-start">
-                        <div className="p-3 bg-indigo-600 rounded-2xl text-white shadow-xl shadow-indigo-600/20 group-hover:rotate-12 transition-transform">
+                        <div className={`p-3 bg-indigo-600 shadow-indigo-600/20 rounded-2xl text-white shadow-xl group-hover:rotate-12 transition-transform`}>
                           <Globe size={24} />
                         </div>
-                        <span className="text-[8px] font-black text-indigo-400 border border-indigo-400/20 px-2 py-1 rounded-full uppercase tracking-widest">Checking</span>
+                        <span className={`text-[8px] font-black text-indigo-400 border-indigo-400/20 border px-2 py-1 rounded-full uppercase tracking-widest`}>Checking</span>
                       </div>
                       <div>
-                        <div className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mb-1">Operating Account</div>
+                        <div className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mb-1">
+                          {'Operating Account'}
+                        </div>
                         <div className="text-3xl font-black text-white">${accountBalances.checking.toLocaleString()}</div>
                       </div>
                       <div className="pt-4 border-t border-white/5 flex justify-between items-center">
                          <div className="text-[9px] font-bold text-slate-500">Synced: {stats.lastSync}</div>
                          <motion.button 
-                           onClick={() => handleMercurySync()} 
-                           disabled={isMercurySyncing} 
+                           onClick={handleBankSync} 
+                           disabled={isMercurySyncing || isPlaidSyncing} 
                            whileHover={{ scale: 1.05 }}
                            whileTap={{ scale: 0.95 }}
-                           className="text-[10px] font-black text-indigo-400 uppercase hover:text-white flex items-center gap-1.5 transition-colors"
+                           className={`text-[10px] font-black text-indigo-400 uppercase hover:text-white flex items-center gap-1.5 transition-colors`}
                          >
-                           {isMercurySyncing ? <Loader2 size={12} className="animate-spin" /> : <RefreshCcw size={12} />} 
+                           {(isMercurySyncing || isPlaidSyncing) ? <Loader2 size={12} className="animate-spin" /> : <RefreshCcw size={12} />} 
                            Sync
                          </motion.button>
                       </div>
@@ -1735,22 +2103,26 @@ const App: React.FC = () => {
                    </div>
                 </motion.div>
 
-                {/* Mercury Credit Card */}
+                {/* Credit Card - Mercury for ADW, Plaid credit for others */}
                 <motion.div 
                   variants={staggerItem}
                   whileHover={{ y: -4, scale: 1.02, transition: { type: 'spring', stiffness: 300 } }}
-                  className="bg-[#121216] border border-indigo-500/20 rounded-[2rem] p-6 shadow-2xl relative overflow-hidden group"
+                  className={`bg-[#121216] border border-indigo-500/20 rounded-[2rem] p-6 shadow-2xl relative overflow-hidden group`}
                 >
-                   <div className="absolute inset-0 bg-gradient-to-br from-indigo-600/5 to-purple-600/5 opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
+                   <div className={`absolute inset-0 bg-gradient-to-br from-indigo-600/5 to-purple-600/5 opacity-0 group-hover:opacity-100 transition-opacity duration-500`}></div>
                    <div className="relative z-10 space-y-4">
                       <div className="flex justify-between items-start">
                         <div className="flex items-center gap-2">
-                          <div className="p-2 bg-indigo-600/20 rounded-xl">
-                            <CreditCard size={16} className="text-indigo-400" />
+                          <div className={`p-2 bg-indigo-600/20 rounded-xl`}>
+                            <CreditCard size={16} className={'text-indigo-400'} />
                           </div>
                           <div>
-                            <div className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Mercury Credit</div>
-                            <div className="text-[9px] text-indigo-400 font-medium">IO Mastercard®</div>
+                            <div className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">
+                              {'Mercury Credit'}
+                            </div>
+                            <div className={`text-[9px] text-indigo-400 font-medium`}>
+                              {'IO Mastercard®'}
+                            </div>
                           </div>
                         </div>
                         {accountBalances.credit > 0 && (
@@ -1775,7 +2147,7 @@ const App: React.FC = () => {
                           <div className="space-y-2">
                             <div className="h-2.5 bg-slate-800/80 rounded-full overflow-hidden">
                               <div 
-                                className="h-full bg-gradient-to-r from-indigo-500 via-purple-500 to-indigo-400 rounded-full transition-all duration-700 ease-out"
+                                className={`h-full bg-gradient-to-r ${'from-indigo-500 via-purple-500 to-indigo-400'} rounded-full transition-all duration-700 ease-out`}
                                 style={{ width: `${accountBalances.creditLimit > 0 ? Math.min((accountBalances.credit / accountBalances.creditLimit) * 100, 100) : 0}%` }}
                               ></div>
                             </div>
@@ -1794,7 +2166,7 @@ const App: React.FC = () => {
                           {/* Credit Card Transactions Count */}
                           <div className="flex items-center justify-between p-3 bg-white/[0.02] rounded-xl border border-white/5">
                             <div className="flex items-center gap-2">
-                              <Activity size={12} className="text-indigo-400" />
+                              <Activity size={12} className={'text-indigo-400'} />
                               <span className="text-[9px] text-slate-400">Card Transactions</span>
                             </div>
                             <span className="text-sm font-bold text-white">
@@ -1808,8 +2180,8 @@ const App: React.FC = () => {
                               <span className="text-slate-600">Limit:</span> ${accountBalances.creditLimit.toLocaleString()}
                             </div>
                             <button 
-                              onClick={() => handleMercurySync()}
-                              className="text-[9px] text-indigo-400 hover:text-indigo-300 font-bold flex items-center gap-1"
+                              onClick={handleBankSync}
+                              className={`text-[9px] ${'text-indigo-400 hover:text-indigo-300'} font-bold flex items-center gap-1`}
                             >
                               <RefreshCcw size={10} />
                               Sync Transactions
@@ -1823,14 +2195,14 @@ const App: React.FC = () => {
                             No credit card data found
                           </div>
                           <button 
-                            onClick={() => handleMercurySync()}
-                            className="px-4 py-2 bg-indigo-600/20 hover:bg-indigo-600/30 border border-indigo-500/30 rounded-xl text-xs font-bold text-indigo-400 flex items-center justify-center gap-2 mx-auto transition-all"
+                            onClick={handleBankSync}
+                            className={`px-4 py-2 ${'bg-indigo-600/20 hover:bg-indigo-600/30 border-indigo-500/30 text-indigo-400'} border rounded-xl text-xs font-bold flex items-center justify-center gap-2 mx-auto transition-all`}
                           >
                             <RefreshCcw size={12} />
-                            Sync Mercury
+                            Sync Bank
                           </button>
                           <div className="text-[9px] text-slate-600 mt-3">
-                            Click sync to load your Mercury credit card
+                            'Click sync to load your Mercury credit card'
                           </div>
                         </div>
                       )}
@@ -1850,7 +2222,7 @@ const App: React.FC = () => {
                   { label: 'Mercury CC', value: `$${accountBalances.credit.toLocaleString()}`, icon: CreditCard, trend: `$${accountBalances.creditAvailable.toLocaleString()} avail`, color: 'text-indigo-400', highlight: false },
                   { label: 'Potential Deductions', value: `$${stats.totalPotentialDeductions.toLocaleString()}`, icon: Scale, trend: '+5.2%', color: 'text-emerald-400', highlight: true },
                   { label: 'Projected Tax Savings', value: `$${stats.projectedTaxSavings.toLocaleString()}`, icon: TrendingUp, trend: 'Optimal', color: 'text-purple-400', highlight: false },
-                  { label: 'Strategy Score', value: `${stats.optimizationScore}%`, icon: Sparkles, trend: 'Shield Active', color: 'text-white', highlight: false },
+                  { label: 'Strategy Score', value: `$${stats.optimizationScore}%`, icon: Sparkles, trend: 'Shield Active', color: 'text-white', highlight: false },
                 ].map((stat, i) => (
                   <motion.div 
                     key={i} 
@@ -2016,7 +2388,7 @@ const App: React.FC = () => {
                               if (analysis) {
                                 setTransactions(prev => {
                                   const updated = prev.map(tx => tx.id === t.id ? { ...tx, analysis } : tx);
-                                  localStorage.setItem('mercury_transactions', JSON.stringify(updated.filter(tx => tx.bankVerified)));
+                                  localStorage.setItem(getUserStorageKey('mercury_transactions'), JSON.stringify(updated.filter(tx => tx.bankVerified)));
                                   return updated;
                                 });
                               }
@@ -2127,8 +2499,8 @@ const App: React.FC = () => {
                               <span className="text-[10px] font-black text-emerald-400 uppercase tracking-widest">Executive Overview</span>
                               <div className="flex items-center gap-2">
                                 <span className="text-[9px] text-slate-500">Health Score:</span>
-                                <span className={`text-sm font-black ${monthlySummary.overallHealthScore >= 70 ? 'text-emerald-400' : monthlySummary.overallHealthScore >= 50 ? 'text-amber-400' : 'text-rose-400'}`}>
-                                  {monthlySummary.overallHealthScore}/100
+                                <span className={`text-sm font-black ${(monthlySummary.overallHealthScore || 0) >= 70 ? 'text-emerald-400' : (monthlySummary.overallHealthScore || 0) >= 50 ? 'text-amber-400' : 'text-rose-400'}`}>
+                                  {monthlySummary.overallHealthScore || 0}/100
                                 </span>
                               </div>
                             </div>
@@ -2140,16 +2512,16 @@ const App: React.FC = () => {
                       {/* Key Metrics Row */}
                       <div className="grid grid-cols-3 gap-4">
                         <div className="bg-white/[0.02] border border-white/5 rounded-2xl p-5 text-center">
-                          <div className="text-2xl font-black text-emerald-400">${monthlySummary.totalRevenue.toLocaleString()}</div>
+                          <div className="text-2xl font-black text-emerald-400">${(monthlySummary.totalRevenue || 0).toLocaleString()}</div>
                           <div className="text-[9px] text-slate-500 font-bold uppercase tracking-widest mt-1">Revenue</div>
                         </div>
                         <div className="bg-white/[0.02] border border-white/5 rounded-2xl p-5 text-center">
-                          <div className="text-2xl font-black text-rose-400">${monthlySummary.totalExpenses.toLocaleString()}</div>
+                          <div className="text-2xl font-black text-rose-400">${(monthlySummary.totalExpenses || 0).toLocaleString()}</div>
                           <div className="text-[9px] text-slate-500 font-bold uppercase tracking-widest mt-1">Expenses</div>
                         </div>
                         <div className="bg-white/[0.02] border border-white/5 rounded-2xl p-5 text-center">
-                          <div className={`text-2xl font-black ${monthlySummary.netCashflow >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                            {monthlySummary.netCashflow >= 0 ? '+' : ''}${monthlySummary.netCashflow.toLocaleString()}
+                          <div className={`text-2xl font-black ${(monthlySummary.netCashflow || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                            {(monthlySummary.netCashflow || 0) >= 0 ? '+' : ''}${(monthlySummary.netCashflow || 0).toLocaleString()}
                           </div>
                           <div className="text-[9px] text-slate-500 font-bold uppercase tracking-widest mt-1">Net Cashflow</div>
                         </div>
@@ -2166,7 +2538,7 @@ const App: React.FC = () => {
                             <span className="text-[10px] font-black text-emerald-400 uppercase tracking-widest">Savings Opportunities</span>
                           </div>
                           <div className="space-y-3">
-                            {monthlySummary.savingsOpportunities.slice(0, 3).map((opp, idx) => (
+                            {(monthlySummary.savingsOpportunities || []).slice(0, 3).map((opp, idx) => (
                               <div key={idx} className="p-4 bg-white/[0.02] rounded-xl border border-white/5 hover:border-emerald-500/20 transition-all">
                                 <div className="flex items-start justify-between mb-2">
                                   <span className="text-xs font-bold text-white">{opp.title}</span>
@@ -2176,7 +2548,7 @@ const App: React.FC = () => {
                                 </div>
                                 <p className="text-[11px] text-slate-400 mb-2">{opp.action}</p>
                                 <div className="text-sm font-black text-emerald-400">
-                                  Save ${opp.potentialSavings.toLocaleString()}
+                                  Save ${(opp.potentialSavings || 0).toLocaleString()}
                                 </div>
                               </div>
                             ))}
@@ -2192,7 +2564,7 @@ const App: React.FC = () => {
                             <span className="text-[10px] font-black text-purple-400 uppercase tracking-widest">Revenue Ventures</span>
                           </div>
                           <div className="space-y-3">
-                            {monthlySummary.ventureOpportunities.slice(0, 3).map((venture, idx) => (
+                            {(monthlySummary.ventureOpportunities || []).slice(0, 3).map((venture, idx) => (
                               <div key={idx} className="p-4 bg-white/[0.02] rounded-xl border border-white/5 hover:border-purple-500/20 transition-all">
                                 <div className="flex items-start justify-between mb-2">
                                   <span className="text-xs font-bold text-white">{venture.idea}</span>
@@ -2219,7 +2591,7 @@ const App: React.FC = () => {
                             <span className="text-[10px] font-black text-indigo-400 uppercase tracking-widest">Action Items</span>
                           </div>
                           <div className="space-y-2">
-                            {monthlySummary.actionItems.slice(0, 4).map((item, idx) => (
+                            {(monthlySummary.actionItems || []).slice(0, 4).map((item, idx) => (
                               <div key={idx} className="flex items-start gap-3 p-3 bg-white/[0.02] rounded-xl">
                                 <span className="text-[10px] font-black text-indigo-400 mt-0.5">{idx + 1}.</span>
                                 <span className="text-[11px] text-slate-300">{item}</span>
@@ -2229,7 +2601,7 @@ const App: React.FC = () => {
                         </div>
 
                         {/* Risk Alerts */}
-                        {monthlySummary.riskAlerts && monthlySummary.riskAlerts.length > 0 && (
+                        {(monthlySummary.riskAlerts || []).length > 0 && (
                           <div className="bg-white/[0.02] border border-rose-500/20 rounded-2xl p-6 space-y-4">
                             <div className="flex items-center gap-2">
                               <div className="p-2 bg-rose-500/10 rounded-lg">
@@ -2238,7 +2610,7 @@ const App: React.FC = () => {
                               <span className="text-[10px] font-black text-rose-400 uppercase tracking-widest">Risk Alerts</span>
                             </div>
                             <div className="space-y-2">
-                              {monthlySummary.riskAlerts.slice(0, 3).map((alert, idx) => (
+                              {(monthlySummary.riskAlerts || []).slice(0, 3).map((alert, idx) => (
                                 <div key={idx} className="flex items-start gap-3 p-3 bg-rose-500/5 rounded-xl border border-rose-500/10">
                                   <AlertCircle size={14} className="text-rose-400 mt-0.5 shrink-0" />
                                   <span className="text-[11px] text-rose-300">{alert}</span>
@@ -2288,17 +2660,19 @@ const App: React.FC = () => {
             >
               <div className="flex justify-between items-center">
                 <div>
-                  <h2 className="text-2xl font-black text-white">Expenditure Ledger</h2>
-                  <p className="text-xs text-slate-500">Verifying cash outflows against the Mercury Protocol.</p>
+                  <h2 className="text-2xl font-black text-white">{'Expenditure Ledger'}</h2>
+                  <p className="text-xs text-slate-500">
+                    'Verifying cash outflows against the Mercury Protocol.'
+                  </p>
                 </div>
                 <div className="flex items-center gap-3">
                   <button 
-                    onClick={() => handleMercurySync()} 
-                    disabled={isMercurySyncing}
-                    className="bg-[#121216] border border-indigo-500/30 text-indigo-400 hover:bg-indigo-500/10 px-5 py-2.5 rounded-xl text-xs font-black uppercase flex items-center gap-2 transition-all shadow-lg active:scale-95"
+                    onClick={handleBankSync} 
+                    disabled={isMercurySyncing || isPlaidSyncing}
+                    className={`bg-[#121216] border ${'border-indigo-500/30 text-indigo-400 hover:bg-indigo-500/10'} px-5 py-2.5 rounded-xl text-xs font-black uppercase flex items-center gap-2 transition-all shadow-lg active:scale-95`}
                   >
-                    {isMercurySyncing ? <Loader2 size={18} className="animate-spin" /> : <Globe size={18} />}
-                    Sync Mercury
+                    {(isMercurySyncing || isPlaidSyncing) ? <Loader2 size={18} className="animate-spin" /> : <Globe size={18} />}
+                    'Sync Mercury'
                   </button>
                   {selectedIds.size > 0 && (
                     <button 
@@ -2728,9 +3102,9 @@ const App: React.FC = () => {
             >
               <div className="flex justify-between items-center">
                 <div>
-                  <h2 className="text-2xl font-black text-white">Receipt Vault</h2>
+                  <h2 className="text-2xl font-black text-white">{'Receipt Vault'}</h2>
                   <p className="text-xs text-slate-500">
-                    Uploaded receipts • {receipts.length} total • Page {receiptPage} of {Math.ceil(receipts.length / RECEIPTS_PER_PAGE)}
+                    'Uploaded receipts' • {receipts.length} total • Page {receiptPage} of {Math.ceil(receipts.length / RECEIPTS_PER_PAGE)}
                   </p>
                 </div>
                 <button 
@@ -2957,11 +3331,13 @@ const App: React.FC = () => {
             >
               <div className="flex justify-between items-center">
                 <div>
-                  <h2 className="text-2xl font-black text-white">Service Agreements</h2>
-                  <p className="text-xs text-slate-500">Active client contracts and retainers.</p>
+                  <h2 className="text-2xl font-black text-white">{'Service Agreements'}</h2>
+                  <p className="text-xs text-slate-500">
+                    'Active client contracts and retainers.'
+                  </p>
                 </div>
-                <button onClick={() => { setEditingAgreement(null); setShowModal('agreement'); }} className="bg-indigo-600 hover:bg-indigo-500 text-white px-5 py-2.5 rounded-xl text-xs font-black uppercase flex items-center gap-2 transition-all shadow-lg active:scale-95">
-                  <Plus size={18} /> New Agreement
+                <button onClick={() => { setEditingAgreement(null); setShowModal('agreement'); }} className={`bg-indigo-600 hover:bg-indigo-500 text-white px-5 py-2.5 rounded-xl text-xs font-black uppercase flex items-center gap-2 transition-all shadow-lg active:scale-95`}>
+                  <Plus size={18} /> New 'Agreement'
                 </button>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -3024,10 +3400,10 @@ const App: React.FC = () => {
                           if(confirm('Delete this agreement?')) { 
                             setAgreements(prev => {
                               const updated = prev.filter(x => x.id !== a.id);
-                              localStorage.setItem('agreements', JSON.stringify(updated));
+                              localStorage.setItem(getUserStorageKey('agreements'), JSON.stringify(updated));
                               return updated;
                             });
-                            db.agreements.delete(a.id).catch(e => console.warn("Supabase delete failed:", e));
+                            db.agreements.delete(a.id, getEffectiveUserId()).catch(e => console.warn("Supabase delete failed:", e));
                             setNotification({ message: "Agreement deleted.", type: 'success' });
                           }
                         }} className="p-2 hover:text-rose-500 transition-colors"><Trash2 size={16}/></button>
@@ -3057,10 +3433,12 @@ const App: React.FC = () => {
             >
               <div className="flex justify-between items-center">
                 <div>
-                  <h2 className="text-2xl font-black text-white">Revenue Log</h2>
-                  <p className="text-xs text-slate-500">Track invoices and incoming payments.</p>
+                  <h2 className="text-2xl font-black text-white">{'Revenue Log'}</h2>
+                  <p className="text-xs text-slate-500">
+                    'Track invoices and incoming payments.'
+                  </p>
                 </div>
-                <button onClick={() => { setEditingInvoice(null); setShowModal('invoice'); }} className="bg-indigo-600 hover:bg-indigo-500 text-white px-5 py-2.5 rounded-xl text-xs font-black uppercase flex items-center gap-2 transition-all shadow-lg active:scale-95">
+                <button onClick={() => { setEditingInvoice(null); setShowModal('invoice'); }} className={`bg-indigo-600 hover:bg-indigo-500 text-white px-5 py-2.5 rounded-xl text-xs font-black uppercase flex items-center gap-2 transition-all shadow-lg active:scale-95`}>
                   <Plus size={18} /> New Invoice
                 </button>
               </div>
@@ -3139,10 +3517,10 @@ const App: React.FC = () => {
                               if(confirm('Delete this invoice?')) { 
                                 setInvoices(prev => {
                                   const updated = prev.filter(x => x.id !== inv.id);
-                                  localStorage.setItem('invoices', JSON.stringify(updated));
+                                  localStorage.setItem(getUserStorageKey('invoices'), JSON.stringify(updated));
                                   return updated;
                                 });
-                                db.invoices.delete(inv.id).catch(e => console.warn("Supabase delete failed:", e));
+                                db.invoices.delete(inv.id, getEffectiveUserId()).catch(e => console.warn("Supabase delete failed:", e));
                                 setNotification({ message: "Invoice deleted.", type: 'success' });
                               }
                             }} className="p-2 hover:text-rose-500 transition-colors"><Trash2 size={16}/></button>
@@ -3174,8 +3552,13 @@ const App: React.FC = () => {
               {/* Header */}
               <div className="flex justify-between items-center">
                 <div>
-                  <h2 className="text-2xl font-black text-white">Tax Center</h2>
-                  <p className="text-xs text-slate-500">Schedule C (Form 1040) synthesis for {taxSummary.year}</p>
+                  <h2 className="text-2xl font-black text-white">'Tax Center'</h2>
+                  <p className="text-xs text-slate-500">
+                    {isADWUser() 
+                      ? `Schedule C (Form 1040) synthesis for ${taxSummary.year}`
+                      : `Tax analysis and deductions for ${taxSummary.year}`
+                    }
+                  </p>
                 </div>
                 <div className="flex gap-2">
                   <button 
@@ -3268,7 +3651,7 @@ const App: React.FC = () => {
                             if (analysis) {
                               setTransactions(prev => {
                                 const updated = prev.map(tx => tx.id === t.id ? { ...tx, analysis } : tx);
-                                localStorage.setItem('mercury_transactions', JSON.stringify(updated.filter(tx => tx.bankVerified)));
+                                localStorage.setItem(getUserStorageKey('mercury_transactions'), JSON.stringify(updated.filter(tx => tx.bankVerified)));
                                 return updated;
                               });
                             }
@@ -3623,10 +4006,12 @@ const App: React.FC = () => {
             >
               <div className="flex justify-between items-center">
                 <div>
-                  <h2 className="text-2xl font-black text-white">Asset Vault</h2>
-                  <p className="text-xs text-slate-500">Company documents, branding, and resources.</p>
+                  <h2 className="text-2xl font-black text-white">{'Asset Vault'}</h2>
+                  <p className="text-xs text-slate-500">
+                    'Company documents, branding, and resources.'
+                  </p>
                 </div>
-                <button onClick={() => setShowModal('asset')} className="bg-indigo-600 hover:bg-indigo-500 text-white px-5 py-2.5 rounded-xl text-xs font-black uppercase flex items-center gap-2 transition-all shadow-lg active:scale-95">
+                <button onClick={() => setShowModal('asset')} className={`bg-indigo-600 hover:bg-indigo-500 text-white px-5 py-2.5 rounded-xl text-xs font-black uppercase flex items-center gap-2 transition-all shadow-lg active:scale-95`}>
                   <Plus size={18} /> Upload Asset
                 </button>
               </div>
@@ -3715,10 +4100,10 @@ const App: React.FC = () => {
                             if(confirm('Delete this asset?')) { 
                               setAssets(prev => {
                                 const updated = prev.filter(x => x.id !== asset.id);
-                                localStorage.setItem('assets', JSON.stringify(updated));
+                                localStorage.setItem(getUserStorageKey('assets'), JSON.stringify(updated));
                                 return updated;
                               });
-                              db.assets.delete(asset.id).catch(e => console.warn("Supabase delete failed:", e));
+                              db.assets.delete(asset.id, getEffectiveUserId()).catch(e => console.warn("Supabase delete failed:", e));
                               setNotification({ message: "Asset deleted.", type: 'success' });
                             }
                           }} className="p-2 hover:text-rose-500 transition-colors"><Trash2 size={16}/></button>
@@ -3750,7 +4135,9 @@ const App: React.FC = () => {
               <div className="flex justify-between items-center">
                 <div>
                   <h1 className="text-2xl font-black text-white">Bills & Utilities</h1>
-                  <p className="text-sm text-slate-500 mt-1">Track household expenses paid with company card</p>
+                  <p className="text-sm text-slate-500 mt-1">
+                    'Track household expenses paid with company card'
+                  </p>
                 </div>
                 <button 
                   onClick={() => { setEditingBill(null); setShowAddBillModal(true); }}
@@ -4559,8 +4946,13 @@ const App: React.FC = () => {
                       <History size={18} />
                     </button>
                     <div>
-                      <h2 className="text-sm font-bold text-white">AI War Room</h2>
-                      <p className="text-[10px] text-slate-500">RAG-powered • IRC Knowledge Base • Your Financial Data</p>
+                      <h2 className="text-sm font-bold text-white">'AI War Room'</h2>
+                      <p className="text-[10px] text-slate-500">
+                        {isADWUser() 
+                          ? 'RAG-powered • IRC Knowledge Base • Mercury Data' 
+                          : `Powered by AI • Tax Knowledge • ${getCompanyName()} Data`
+                        }
+                      </p>
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
@@ -4595,10 +4987,12 @@ const App: React.FC = () => {
                       }`}>
                         {msg.role === 'assistant' && (
                           <div className="flex items-center gap-2 mb-2 pb-2 border-b border-white/5">
-                            <div className="p-1 bg-indigo-500/20 rounded-lg">
-                              <Brain size={12} className="text-indigo-400" />
+                            <div className={`p-1 bg-indigo-500/20 rounded-lg`}>
+                              <Brain size={12} className={'text-indigo-400'} />
                             </div>
-                            <span className="text-[9px] text-indigo-400 font-bold uppercase">Tax Strategist</span>
+                            <span className={`text-[9px] text-indigo-400 font-bold uppercase`}>
+                              {'Tax Strategist'}
+                            </span>
                           </div>
                         )}
                         <p className="text-sm leading-relaxed whitespace-pre-wrap">{msg.content}</p>
@@ -4896,20 +5290,20 @@ const App: React.FC = () => {
               if (editingAgreement) {
                 setAgreements(prev => {
                   const updated = prev.map(a => a.id === agreement.id ? agreement : a);
-                  localStorage.setItem('agreements', JSON.stringify(updated));
+                  localStorage.setItem(getUserStorageKey('agreements'), JSON.stringify(updated));
                   return updated;
                 });
               } else {
                 setAgreements(prev => {
                   const updated = [...prev, agreement];
-                  localStorage.setItem('agreements', JSON.stringify(updated));
+                  localStorage.setItem(getUserStorageKey('agreements'), JSON.stringify(updated));
                   return updated;
                 });
               }
               
-              // Try to save to Supabase (optional - may fail if table doesn't exist)
+              // Try to save to Supabase with user_id (optional - may fail if table doesn't exist)
               try {
-                await db.agreements.upsert(agreement);
+                await db.agreements.upsert(agreement, getEffectiveUserId());
               } catch (error) {
                 console.warn('Supabase save failed (table may not exist), saved locally:', error);
               }
@@ -5143,9 +5537,9 @@ const App: React.FC = () => {
                 setTransactions(prev => [...prev, transaction]);
               }
               
-              // Try Supabase (optional)
+              // Try Supabase with user_id (optional)
               try {
-                await db.transactions.upsert(transaction);
+                await db.transactions.upsert(transaction, getEffectiveUserId());
               } catch (error) {
                 console.warn('Supabase save failed, saved locally:', error);
               }
@@ -5295,20 +5689,20 @@ const App: React.FC = () => {
               if (editingInvoice) {
                 setInvoices(prev => {
                   const updated = prev.map(i => i.id === invoice.id ? invoice : i);
-                  localStorage.setItem('invoices', JSON.stringify(updated));
+                  localStorage.setItem(getUserStorageKey('invoices'), JSON.stringify(updated));
                   return updated;
                 });
               } else {
                 setInvoices(prev => {
                   const updated = [...prev, invoice];
-                  localStorage.setItem('invoices', JSON.stringify(updated));
+                  localStorage.setItem(getUserStorageKey('invoices'), JSON.stringify(updated));
                   return updated;
                 });
               }
               
-              // Try Supabase (optional)
+              // Try Supabase with user_id (optional)
               try {
-                await db.invoices.upsert(invoice);
+                await db.invoices.upsert(invoice, getEffectiveUserId());
               } catch (error) {
                 console.warn('Supabase save failed, saved locally:', error);
               }
@@ -5554,13 +5948,13 @@ const App: React.FC = () => {
                 // Update local state first
                 setAssets(prev => {
                   const updated = [...prev, asset];
-                  localStorage.setItem('assets', JSON.stringify(updated));
+                  localStorage.setItem(getUserStorageKey('assets'), JSON.stringify(updated));
                   return updated;
                 });
                 
-                // Try Supabase (optional)
+                // Try Supabase with user_id (optional)
                 try {
-                  await db.assets.upsert(asset);
+                  await db.assets.upsert(asset, getEffectiveUserId());
                 } catch (error) {
                   console.warn('Supabase save failed, saved locally:', error);
                 }

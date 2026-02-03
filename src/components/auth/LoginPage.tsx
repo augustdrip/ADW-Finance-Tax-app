@@ -623,7 +623,7 @@ const FeatureChip: React.FC<{
 type AuthMode = 'login' | 'signup' | 'phone' | 'otp';
 
 export function LoginPage() {
-  const { signInWithGoogle, signInWithEmail, signUpWithEmail, signInWithPhone, verifyOtp, loading, error } = useAuth();
+  const { signInWithGoogle, signInWithEmail, signUpWithEmail, signInWithPhone, verifyOtp, devLogin, loading: authLoading, error } = useAuth();
   
   const [mode, setMode] = useState<AuthMode>('login');
   const [email, setEmail] = useState('');
@@ -632,6 +632,23 @@ export function LoginPage() {
   const [phone, setPhone] = useState('');
   const [otp, setOtp] = useState('');
   const [localError, setLocalError] = useState<string | null>(null);
+  const [isGoogleLoading, setIsGoogleLoading] = useState(false);
+  
+  // Don't use global auth loading for button disabled state - it blocks the button
+  const loading = isGoogleLoading;
+  
+  const handleGoogleLogin = async () => {
+    console.log('[LoginPage] Google login clicked');
+    setIsGoogleLoading(true);
+    setLocalError(null);
+    try {
+      await signInWithGoogle();
+    } catch (e) {
+      console.error('[LoginPage] Google login error:', e);
+      setLocalError('Failed to start Google login');
+      setIsGoogleLoading(false);
+    }
+  };
 
   const handleEmailAuth = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -770,11 +787,11 @@ export function LoginPage() {
                   <motion.button
                     whileHover={{ scale: 1.02 }}
                     whileTap={{ scale: 0.98 }}
-                    onClick={signInWithGoogle}
-                    disabled={loading}
-                    className="w-full flex items-center justify-center gap-3 bg-white hover:bg-slate-50 text-slate-900 font-bold py-4 px-6 rounded-xl transition-all mb-6 shadow-lg"
+                    onClick={handleGoogleLogin}
+                    disabled={isGoogleLoading}
+                    className="w-full flex items-center justify-center gap-3 bg-white hover:bg-slate-50 text-slate-900 font-bold py-4 px-6 rounded-xl transition-all mb-6 shadow-lg disabled:opacity-50"
                   >
-                    {loading ? (
+                    {isGoogleLoading ? (
                       <Loader2 size={20} className="animate-spin" />
                     ) : (
                       <>
@@ -979,6 +996,35 @@ export function LoginPage() {
               </div>
             </div>
             
+            {/* Dev Mode - Development Only */}
+            {import.meta.env.DEV && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ delay: 1 }}
+                className="mt-4"
+              >
+                <div className="relative">
+                  <div className="absolute inset-0 flex items-center">
+                    <div className="w-full border-t border-yellow-500/20"></div>
+                  </div>
+                  <div className="relative flex justify-center text-xs">
+                    <span className="px-4 bg-[#0a0a0f] text-yellow-600/60">dev mode</span>
+                  </div>
+                </div>
+                <motion.button
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  onClick={devLogin}
+                  disabled={loading}
+                  className="w-full mt-3 flex items-center justify-center gap-2 bg-yellow-500/10 hover:bg-yellow-500/20 border border-yellow-500/30 text-yellow-500 font-medium py-3 px-4 rounded-xl transition-all"
+                >
+                  <Sparkles size={16} />
+                  Skip Login (Dev Only)
+                </motion.button>
+              </motion.div>
+            )}
+
             {/* Footer */}
             <p className="text-center text-xs text-slate-600 mt-6">
               © 2026 Agency Dev Works. All rights reserved.

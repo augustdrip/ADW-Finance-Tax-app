@@ -33,6 +33,7 @@ interface AuthContextType {
   signUpWithEmail: (email: string, password: string, fullName?: string) => Promise<void>;
   signInWithPhone: (phone: string) => Promise<void>;
   verifyOtp: (phone: string, token: string) => Promise<void>;
+  devLogin: () => void;
   signOut: () => Promise<void>;
   updateProfile: (updates: Partial<UserProfile>) => Promise<void>;
   isAdmin: boolean;
@@ -120,29 +121,121 @@ export function AuthProvider({ children }: AuthProviderProps) {
     }
   };
 
+  // Dev mode login - bypasses real auth for development
+  const devLogin = () => {
+    const mockUser = {
+      id: 'dev-user-123',
+      email: 'dev@localhost',
+      user_metadata: { full_name: 'Dev User' }
+    } as User;
+    
+    const mockProfile: UserProfile = {
+      id: 'dev-user-123',
+      email: 'dev@localhost',
+      full_name: 'Dev User',
+      company_name: 'Dev Company',
+      role: 'admin',
+      onboarding_completed: true,
+      plaid_access_token: null,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+    
+    setUser(mockUser);
+    setProfile(mockProfile);
+    setLoading(false);
+    console.log('[Auth] Dev mode login - bypassed real authentication');
+  };
+
   // Initialize auth state
   useEffect(() => {
+    let mounted = true;
+    
+    // DEV MODE: Check for dev bypass in URL or localStorage
+    const urlParams = new URLSearchParams(window.location.search);
+    const isDevBypass = urlParams.get('dev') === 'true' || localStorage.getItem('dev_mode') === 'true';
+    
+    if (isDevBypass && import.meta.env.DEV) {
+      console.log('[Auth] Dev bypass detected - skipping Supabase auth');
+      localStorage.setItem('dev_mode', 'true');
+      devLogin();
+      return;
+    }
+
     if (!supabase) {
+      console.warn('[Auth] Supabase not configured');
       setLoading(false);
       return;
     }
 
     // Get initial session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setUser(session?.user ?? null);
-      
-      if (session?.user) {
-        fetchProfile(session.user.id).then(setProfile);
+    const initAuth = async () => {
+      try {
+        console.log('[Auth] Checking session...');
+        
+        const { data: { session }, error } = await supabase!.auth.getSession();
+        
+        // Ignore abort errors (caused by React strict mode)
+        if (error && error.message?.includes('aborted')) {
+          console.log('[Auth] Request aborted (strict mode), ignoring');
+          return;
+        }
+        
+        if (!mounted) return;
+        
+        if (error) {
+          console.warn('[Auth] Session error:', error.message);
+        }
+        
+        console.log('[Auth] Session:', session ? session.user.email : 'none');
+        
+        setSession(session);
+        setUser(session?.user ?? null);
+        
+        if (session?.user && mounted) {
+          // Fetch profile in background
+          fetchProfile(session.user.id).then(async (userProfile) => {
+            if (!mounted) return;
+            if (userProfile) {
+              const email = session.user.email?.toLowerCase();
+              const isADW = email?.endsWith('@agencydevworks.ai');
+              if (isADW && !userProfile.onboarding_completed) {
+                await supabase!.from('profiles').update({ 
+                  onboarding_completed: true,
+                  role: 'adw_member'
+                }).eq('id', session.user.id);
+                userProfile.onboarding_completed = true;
+                userProfile.role = 'adw_member';
+              }
+              setProfile(userProfile);
+            }
+          }).catch(() => {});
+        }
+      } catch (err: any) {
+        // Ignore abort errors
+        if (err?.name === 'AbortError' || err?.message?.includes('aborted')) {
+          return;
+        }
+        console.warn('[Auth] Init error:', err);
+      } finally {
+        if (mounted) {
+          setLoading(false);
+        }
       }
-      
-      setLoading(false);
-    });
+    };
+
+    // Small delay to let React strict mode settle
+    const timer = setTimeout(initAuth, 100);
+    
+    return () => {
+      mounted = false;
+      clearTimeout(timer);
+    };
 
     // Listen for auth state changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
-        console.log('[Auth] State changed:', event);
+        console.log('[Auth] State changed:', event, session?.user?.email);
         setSession(session);
         setUser(session?.user ?? null);
         setError(null);
@@ -151,8 +244,21 @@ export function AuthProvider({ children }: AuthProviderProps) {
           let userProfile = await fetchProfile(session.user.id);
           
           // Create profile if it doesn't exist (new user)
-          if (!userProfile && event === 'SIGNED_IN') {
+          if (!userProfile && (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED')) {
             userProfile = await createProfile(session.user);
+          }
+          
+          // Auto-complete onboarding for ADW members
+          const email = session.user.email?.toLowerCase();
+          const isADW = email?.endsWith('@agencydevworks.ai');
+          if (isADW && userProfile && !userProfile.onboarding_completed) {
+            console.log('[Auth] ADW member signed in, auto-completing onboarding');
+            await supabase!.from('profiles').update({ 
+              onboarding_completed: true,
+              role: 'adw_member'
+            }).eq('id', session.user.id);
+            userProfile.onboarding_completed = true;
+            userProfile.role = 'adw_member';
           }
           
           setProfile(userProfile);
@@ -169,23 +275,48 @@ export function AuthProvider({ children }: AuthProviderProps) {
     };
   }, [supabase]);
 
-  // Sign in with Google
+  // Sign in with Google - allows any Google account
   const signInWithGoogle = async () => {
+    console.log('[Auth] signInWithGoogle called');
+    
     if (!supabase) {
+      console.error('[Auth] Supabase not configured!');
       setError({ message: 'Supabase not configured', status: 500 } as AuthError);
       return;
     }
     
     setLoading(true);
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: {
-        redirectTo: `${window.location.origin}/onboarding`
-      }
-    });
+    setError(null);
     
-    if (error) {
-      setError(error);
+    const redirectUrl = `${window.location.origin}/auth/callback`;
+    console.log('[Auth] Redirecting to Google OAuth with callback:', redirectUrl);
+    
+    try {
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: redirectUrl,
+          queryParams: {
+            access_type: 'offline',
+            prompt: 'select_account',
+          }
+        }
+      });
+      
+      console.log('[Auth] OAuth response:', { data, error });
+      
+      if (error) {
+        console.error('[Auth] OAuth error:', error);
+        setError(error);
+        setLoading(false);
+      } else if (data?.url) {
+        console.log('[Auth] Redirecting to:', data.url);
+        // The redirect should happen automatically, but just in case
+        window.location.href = data.url;
+      }
+    } catch (e) {
+      console.error('[Auth] OAuth exception:', e);
+      setError({ message: String(e), status: 500 } as AuthError);
       setLoading(false);
     }
   };
@@ -276,11 +407,28 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const signOut = async () => {
     if (!supabase) return;
     
+    console.log('[Auth] Signing out...');
+    
+    // Clear user-specific localStorage data to ensure clean slate on next login
+    const keysToRemove = Object.keys(localStorage).filter(key => 
+      key.includes('_') && (
+        key.startsWith('mercury_') || 
+        key.startsWith('plaid_') || 
+        key.startsWith('creditcard_') ||
+        key.startsWith('agreements_') ||
+        key.startsWith('invoices_') ||
+        key.startsWith('assets_')
+      )
+    );
+    keysToRemove.forEach(key => localStorage.removeItem(key));
+    
     await supabase.auth.signOut();
     setUser(null);
     setProfile(null);
     setSession(null);
     setLoading(false);
+    
+    console.log('[Auth] Signed out, redirecting to login...');
     
     // Force redirect to login page
     window.location.href = '/login';
@@ -309,9 +457,28 @@ export function AuthProvider({ children }: AuthProviderProps) {
     }
   };
 
+  // ADW team emails that have access to the shared Mercury account
+  const ADW_TEAM_EMAILS = [
+    'ali@agencydevworks.ai',
+    'mario@agencydevworks.ai',
+    'sajjad@agencydevworks.ai',
+    'mustafa@agencydevworks.ai',
+    'hassanain@agencydevworks.ai',
+    'diego@agencydevworks.ai',
+  ];
+  
+  // Check if user is an ADW team member by email
+  const checkIsADWMember = () => {
+    const email = user?.email?.toLowerCase();
+    if (!email) return false;
+    
+    // Check explicit team list or @agencydevworks.ai domain
+    return ADW_TEAM_EMAILS.includes(email) || email.endsWith('@agencydevworks.ai');
+  };
+  
   // Computed properties
   const isAdmin = profile?.role === 'admin';
-  const isADWMember = profile?.role === 'adw_member' || profile?.role === 'admin';
+  const isADWMember = checkIsADWMember() || profile?.role === 'adw_member' || profile?.role === 'admin';
 
   const value: AuthContextType = {
     user,
@@ -326,6 +493,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     verifyOtp,
     signOut,
     updateProfile,
+    devLogin,
     isAdmin,
     isADWMember
   };

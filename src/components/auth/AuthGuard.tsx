@@ -27,8 +27,21 @@ export function AuthGuard({
   const { user, profile, loading, isAdmin, isADWMember } = useAuth();
   const location = useLocation();
 
-  // Show loading state
-  if (loading) {
+  // Show loading state with timeout fallback
+  const [loadingTimeout, setLoadingTimeout] = React.useState(false);
+  
+  React.useEffect(() => {
+    if (loading) {
+      const timer = setTimeout(() => {
+        setLoadingTimeout(true);
+        console.warn('[AuthGuard] Loading timeout - forcing continue');
+      }, 3000); // 3 second timeout
+      return () => clearTimeout(timer);
+    }
+  }, [loading]);
+  
+  // If loading times out but we have a user, continue anyway
+  if (loading && !loadingTimeout) {
     return (
       <div className="min-h-screen bg-[#08080a] flex items-center justify-center">
         <motion.div
@@ -63,8 +76,9 @@ export function AuthGuard({
     return <Navigate to="/" replace />;
   }
 
+  // ADW team members skip onboarding - they already have access to Mercury data
   // Redirect to onboarding if not completed (unless we're already on onboarding)
-  if (requireOnboarding && profile && !profile.onboarding_completed) {
+  if (requireOnboarding && profile && !profile.onboarding_completed && !isADWMember) {
     if (!location.pathname.startsWith('/onboarding')) {
       return <Navigate to="/onboarding" replace />;
     }

@@ -14,7 +14,12 @@ export default defineConfig(({ mode }) => {
             target: 'https://api.mercury.com',
             changeOrigin: true,
             rewrite: (path) => path.replace(/^\/api\/mercury/, '/api/v1'),
-            secure: false, // Set to false for better local development compatibility
+            secure: false,
+          },
+          // Proxy Plaid API calls to local API server
+          '/api/plaid': {
+            target: 'http://localhost:3001',
+            changeOrigin: true,
           }
         }
       },

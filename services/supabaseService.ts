@@ -20,7 +20,18 @@ function getClient(): SupabaseClient | null {
   }
   
   if (!supabase) {
-    supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      auth: {
+        // Persist session in localStorage (works across refreshes)
+        persistSession: true,
+        // Auto refresh token before expiry
+        autoRefreshToken: true,
+        // Detect session from URL (for OAuth callbacks)
+        detectSessionInUrl: true,
+        // Storage key for the session
+        storageKey: 'adw-finance-auth',
+      }
+    });
     console.log('[Supabase] Connected to TaxShield database');
   }
   return supabase;
@@ -127,7 +138,7 @@ export const db = {
     upsert: (record: any, userId?: string) => upsertToTable('assets', record, userId),
     delete: (id: string, userId?: string) => deleteFromTable('assets', id, userId)
   },
-  // New tables for SaaS
+  // User profile (id = user_id)
   profiles: {
     fetch: (userId?: string) => fetchFromTable('profiles', userId),
     upsert: (record: any) => upsertToTable('profiles', record),
@@ -138,10 +149,35 @@ export const db = {
       return data;
     }
   },
+  // Plaid bank connections
   plaid_items: {
     fetch: (userId?: string) => fetchFromTable('plaid_items', userId),
     upsert: (record: any, userId?: string) => upsertToTable('plaid_items', record, userId),
     delete: (id: string, userId?: string) => deleteFromTable('plaid_items', id, userId)
+  },
+  // Receipts
+  receipts: {
+    fetch: (userId?: string) => fetchFromTable('receipts', userId),
+    upsert: (record: any, userId?: string) => upsertToTable('receipts', record, userId),
+    delete: (id: string, userId?: string) => deleteFromTable('receipts', id, userId)
+  },
+  // Chat sessions for AI assistant
+  chat_sessions: {
+    fetch: (userId?: string) => fetchFromTable('chat_sessions', userId),
+    upsert: (record: any, userId?: string) => upsertToTable('chat_sessions', record, userId),
+    delete: (id: string, userId?: string) => deleteFromTable('chat_sessions', id, userId)
+  },
+  // Utility credentials
+  credentials: {
+    fetch: (userId?: string) => fetchFromTable('credentials', userId),
+    upsert: (record: any, userId?: string) => upsertToTable('credentials', record, userId),
+    delete: (id: string, userId?: string) => deleteFromTable('credentials', id, userId)
+  },
+  // Bills tracking
+  bills: {
+    fetch: (userId?: string) => fetchFromTable('bills', userId),
+    upsert: (record: any, userId?: string) => upsertToTable('bills', record, userId),
+    delete: (id: string, userId?: string) => deleteFromTable('bills', id, userId)
   }
 };
 

@@ -45,9 +45,24 @@ export interface BillPayment {
   notes?: string;
 }
 
-// Local storage keys
+// Local storage keys - base keys that get userId appended
 const BILLS_KEY = 'adw_bills';
 const BILL_PAYMENTS_KEY = 'adw_bill_payments';
+
+// Current user ID for multi-tenancy
+let currentUserId: string | undefined;
+
+/**
+ * Set the current user ID for multi-tenant storage
+ */
+export function setCurrentUserId(userId: string | undefined): void {
+  currentUserId = userId;
+}
+
+// Get user-specific storage key
+function getUserStorageKey(baseKey: string): string {
+  return currentUserId ? `${baseKey}_${currentUserId}` : baseKey;
+}
 
 // ============================================
 // Local Storage Operations
@@ -55,7 +70,7 @@ const BILL_PAYMENTS_KEY = 'adw_bill_payments';
 
 function getBillsFromLocalStorage(): Bill[] {
   try {
-    const data = localStorage.getItem(BILLS_KEY);
+    const data = localStorage.getItem(getUserStorageKey(BILLS_KEY));
     return data ? JSON.parse(data) : [];
   } catch (e) {
     console.warn('[Bills] Failed to parse local storage:', e);
@@ -65,7 +80,7 @@ function getBillsFromLocalStorage(): Bill[] {
 
 function saveBillsToLocalStorage(bills: Bill[]): void {
   try {
-    localStorage.setItem(BILLS_KEY, JSON.stringify(bills));
+    localStorage.setItem(getUserStorageKey(BILLS_KEY), JSON.stringify(bills));
   } catch (e) {
     console.warn('[Bills] Failed to save to local storage:', e);
   }
@@ -73,7 +88,7 @@ function saveBillsToLocalStorage(bills: Bill[]): void {
 
 function getPaymentsFromLocalStorage(): BillPayment[] {
   try {
-    const data = localStorage.getItem(BILL_PAYMENTS_KEY);
+    const data = localStorage.getItem(getUserStorageKey(BILL_PAYMENTS_KEY));
     return data ? JSON.parse(data) : [];
   } catch (e) {
     return [];
@@ -82,7 +97,7 @@ function getPaymentsFromLocalStorage(): BillPayment[] {
 
 function savePaymentsToLocalStorage(payments: BillPayment[]): void {
   try {
-    localStorage.setItem(BILL_PAYMENTS_KEY, JSON.stringify(payments));
+    localStorage.setItem(getUserStorageKey(BILL_PAYMENTS_KEY), JSON.stringify(payments));
   } catch (e) {
     console.warn('[Bills] Failed to save payments:', e);
   }
@@ -686,7 +701,8 @@ export const billsService = {
   getAllPaymentHistory,
   initializeDefaultBills,
   getBillsWithTransactions,
-  getCategoryPaymentSummary
+  getCategoryPaymentSummary,
+  setCurrentUserId
 };
 
 export default billsService;
